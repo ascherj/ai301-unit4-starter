@@ -1,0 +1,39 @@
+{
+  "id": "pkg-17",
+  "calibration": false,
+  "source": "vuejs/core#14893",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: vuejs/core (54219 stars, archived: no)\n- description: Vue.js is a progressive, incrementally-adoptable JavaScript framework for building UI on the web.\n- latest release: v3.5.41 (2026-08-05)\n- pull requests: no PR template; the contributing guide's pull request guidelines ask for a clear description of the problem, tests for fixes, and conventional-commit titles\n- contribution policy (.github/contributing.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "`reactive` silently skips un-extensible objects, which seems undocumented and unnecessary",
+    "number": 14893,
+    "author": "edave64",
+    "author_association": "NONE",
+    "opened": "2026-05-30",
+    "state": "open",
+    "labels": [
+      "has workaround",
+      "p2-edge-case"
+    ],
+    "body_markdown": "Code like `reactive(Object.seal({ useDarkTheme: null }))` looks like\nit should observe property changes while preventing new properties.\nWhat is not mentioned in the documentation is that `reactive` will\nsilently return the target object without any proxy if it is\nnon-extensible. This caused a shipped bug where setting the theme\njust did nothing.\n\nThe skip traces to the days when `reactive` set a flag property\ndirectly on the target (which threw on frozen objects); reactivity\nflags are now handled by the proxy's `get` handler without modifying\nthe target, so the historical reason is gone.\n\nProposed: either make `reactive(Object.seal(...))` work, or cement\nand document the current behavior. (Keeping the skip for\n`Object.isFrozen()` would be safe either way, since frozen objects\ncannot mutate.)"
+  },
+  "comments_total": 1,
+  "thread_highlights": [
+    {
+      "date": "2026-05-31",
+      "author": "edave64",
+      "author_association": "NONE",
+      "summary_markdown": "the workaround makes it extra silly: `Object.seal(reactive({...}))` works fine, since the proxy does not trap preventExtensions."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): a minimal script shows\n`reactive(Object.seal({ x: 1 }))` returning the raw target\n(`isReactive()` false, watcher never fires on `x`), while\n`reactive({ x: 1 })` behaves normally; a control confirms the frozen\ncase (`Object.freeze`) also returns the raw object.\n\nPlan: this is a behavior-vs-documentation decision the thread leaves\nopen, so the plan takes the conservative half: keep the skip, stop\nit being silent, and document it. Scope, two named deliverables:\n(1) in `packages/reactivity/src/reactive.ts`, emit a dev-mode\nwarning when `reactive()` (and `shallowReactive`) receives a\nnon-extensible, non-frozen target it will not proxy; (2) update the\nreactivity-core documentation page to state the limitation and the\n`Object.seal(reactive(...))` workaround. Not in scope: changing what\n`reactive` returns. Files: `packages/reactivity/src/reactive.ts`,\nits tests, and the docs page. Test plan: dev build re-run of the\nrepro, expect the warning naming the function and the target's\nsealed state; production build unchanged; docs render the new note;\n`pnpm test reactivity`.",
+  "pr": {
+    "title": "fix(reactivity): warn when reactive() skips a non-extensible target, and document the behavior",
+    "description": "Implements the plan on #14893 in full: `reactive()` and\n`shallowReactive()` now emit a dev-mode warning when handed a\nnon-extensible target they will not proxy (sealed objects were the\nsilent shipped-bug case), and the reactivity-core documentation now\ndocuments the limitation with the `Object.seal(reactive(...))`\nworkaround, so the behavior is both visible at runtime and stated in\nthe docs. No behavior change in what `reactive` returns; frozen\nobjects stay exempt from the warning since they cannot mutate\nanyway. Tests cover the sealed, frozen, and extensible cases.",
+    "commits": "- 51e0f2c fix(reactivity): warn on non-extensible targets in dev",
+    "diff": "```diff\n--- a/packages/reactivity/src/reactive.ts\n+++ b/packages/reactivity/src/reactive.ts\n@@ -284,6 +284,14 @@ function createReactiveObject(\n   // target cannot be observed\n   if (!Object.isExtensible(target)) {\n+    if (__DEV__ && !Object.isFrozen(target)) {\n+      warn(\n+        `reactive() cannot make a non-extensible object reactive; ` +\n+          `returning the raw object. Wrap the object with reactive() ` +\n+          `before sealing it: Object.seal(reactive(obj)).`,\n+      )\n+    }\n     return target\n   }\n--- a/packages/reactivity/__tests__/reactive.spec.ts\n+++ b/packages/reactivity/__tests__/reactive.spec.ts\n@@ -301,3 +301,17 @@ describe('reactivity/reactive', () => {\n+\n+  test('warns on sealed target and returns it raw (#14893)', () => {\n+    const sealed = Object.seal({ x: 1 })\n+    const result = reactive(sealed)\n+    expect(result).toBe(sealed)\n+    expect(\n+      `reactive() cannot make a non-extensible object reactive`,\n+    ).toHaveBeenWarned()\n+  })\n+\n+  test('does not warn on frozen target', () => {\n+    reactive(Object.freeze({ x: 1 }))\n+    expect(warnSpy).not.toHaveBeenCalled()\n+  })\n```",
+    "test_evidence": "Repro re-run on a dev build:\n\n```\n> const ui = reactive(Object.seal({ useDarkTheme: null }))\n[Vue warn] reactive() cannot make a non-extensible object reactive;\nreturning the raw object. Wrap the object with reactive() before\nsealing it: Object.seal(reactive(obj)).\n```\n\nExpected-after per the plan: the silent skip now warns in dev;\nproduction build emits nothing (verified with a prod bundle run).\n`pnpm test reactivity` passes (511 tests)."
+  }
+}

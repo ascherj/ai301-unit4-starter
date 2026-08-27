@@ -1,0 +1,32 @@
+{
+  "id": "pkg-19",
+  "calibration": false,
+  "source": "mikefarah/yq#2819",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: mikefarah/yq (15853 stars, archived: no)\n- description: yq is a portable command-line YAML, JSON, XML, CSV, TOML, HCL and properties processor.\n- latest release: v4.53.4 (2026-08-19)\n- pull requests: no PR template; the contribution docs ask for tests with fixes\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "Single-quoted multi-line flow scalar ending with a blank line loses indentation level on output",
+    "number": 2819,
+    "author": "taisph",
+    "author_association": "NONE",
+    "opened": "2026-08-18",
+    "state": "open",
+    "labels": [
+      "bug",
+      "v4"
+    ],
+    "body_markdown": "Running the YAML below through `yq .` puts the closing single-quote\nat the wrong indentation level:\n\nInput (`source.yml`):\n\n```yaml\npaths:\n  /v1/quack:\n    get:\n      description: '\n        Get quacked.\n\n        - Duck\n\n        '\n```\n\nActual output:\n\n```yaml\npaths:\n  /v1/quack:\n    get:\n      description: ' Get quacked.\n\n        - Duck\n\n'\n```\n\nExpected: the input preserved. Oddly, yq treats the output as valid\nand parsable even though other tools flag it as incorrect;\ndouble-quoting does not exhibit the behavior. yq 4.53.2 and 4.53.3,\nUbuntu Linux."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's file re-run\nthrough `yq .` on 4.53.3 reproduces the dedented closing quote;\ncontrols show the double-quoted twin round-trips correctly and a\nsingle-quoted scalar WITHOUT the trailing blank line round-trips\ncorrectly, isolating the trailing-line-break handling of the\nsingle-quote emitter.\n\nPlan: in the vendored go-yaml emitter\n(`vendor/github.com/mikefarah/yaml/v3/emitterc.go`), the\nsingle-quoted writer resets the emitter's indentation state after\nwriting a line break; the double-quoted writer preserves it, which\nis why the double-quoted twin round-trips. The reset is what writes\nthe continuation after a trailing blank line, and the closing quote,\nwithout the flow-scalar indent. Scope, one bounded change: in\n`yaml_emitter_write_single_quoted_scalar`, stop resetting the\nindentation state at the break-writing site, matching the\ndouble-quoted writer's break handling exactly (the trailing-blank-\nline dedent from the issue is the visible symptom of that reset).\nNot in scope: any other scalar style or the parser. Files: the\nemitter file, a round-trip regression test in the yq operator tests.\nTest plan: re-run `yq . source.yml`, expect byte-identical\nround-trip of the issue's input; the two controls unchanged;\n`go test ./...`.",
+  "pr": {
+    "title": "Preserve indent for single-quoted scalars ending in a blank line",
+    "description": "The single-quote emitter reset its indent state after writing a\nline break, which dedented the continuation after a trailing blank\nline and the closing quote itself (#2819). Per the plan, the reset\nis removed from the break-writing site, matching the double-quoted\nwriter's break handling exactly. Round-trip regression test added\nfrom the issue's input.",
+    "commits": "- e4f7c88 emitter: keep flow indent across trailing breaks in single-quoted scalars",
+    "diff": "```diff\n--- a/vendor/github.com/mikefarah/yaml/v3/emitterc.go\n+++ b/vendor/github.com/mikefarah/yaml/v3/emitterc.go\n@@ -1893,13 +1893,12 @@ func yaml_emitter_write_single_quoted_scalar(emitter *yaml_emitter_t, value []by\n \t\tif is_break(value, i) {\n \t\t\tif !write_break(emitter, value, &i) {\n \t\t\t\treturn false\n \t\t\t}\n-\t\t\t// A break resets indentation so the next line starts fresh;\n-\t\t\t// a trailing break therefore leaves the closing quote at\n-\t\t\t// column zero.\n-\t\t\temitter.indention = true\n-\t\t\temitter.whitespace = true\n+\t\t\t// No indentation reset here: it dedented the continuation\n+\t\t\t// after a trailing blank line, and the closing quote itself\n+\t\t\t// (#2819). The double-quoted writer's break handling has no\n+\t\t\t// reset either.\n \t\t\tprevious_break = true\n \t\t} else {\n--- a/pkg/yqlib/operator_style_test.go\n+++ b/pkg/yqlib/operator_style_test.go\n@@ -212,3 +212,20 @@ var styleOperatorScenarios = []expressionScenario{\n+\t{\n+\t\tdescription: \"single-quoted multi-line scalar with trailing blank line round-trips (#2819)\",\n+\t\tdocument: \"paths:\\n  /v1/quack:\\n    get:\\n      description: '\\n        Get quacked.\\n\\n        - Duck\\n\\n        '\\n\",\n+\t\texpression: \".\",\n+\t\texpected: []string{\n+\t\t\t\"D0, P[], (!!map)::paths:\\n  /v1/quack:\\n    get:\\n      description: '\\n        Get quacked.\\n\\n        - Duck\\n\\n        '\\n\",\n+\t\t},\n+\t},\n```",
+    "test_evidence": "Repro re-run on the branch. Before (4.53.3):\n\n```\n$ yq . source.yml\npaths:\n  /v1/quack:\n    get:\n      description: ' Get quacked.\n\n        - Duck\n\n'\n```\n\nAfter (branch build):\n\n```\n$ ./yq . source.yml\npaths:\n  /v1/quack:\n    get:\n      description: '\n        Get quacked.\n\n        - Duck\n\n        '\n$ diff <(./yq . source.yml) source.yml && echo IDENTICAL\nIDENTICAL\n```\n\nExpected-after per the plan: byte-identical round-trip. Controls\n(double-quoted twin; single-quoted without the trailing blank line)\nunchanged. `go test ./...` passes (4108 tests)."
+  }
+}

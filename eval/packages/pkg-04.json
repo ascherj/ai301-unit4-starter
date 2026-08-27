@@ -1,0 +1,31 @@
+{
+  "id": "pkg-04",
+  "calibration": false,
+  "source": "sharkdp/bat#3833",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: sharkdp/bat (60209 stars, archived: no)\n- description: A cat(1) clone with wings.\n- latest release: v0.26.1 (2025-12-02)\n- pull requests: no PR template; standard contribution guide asks for tests with behavior changes and a CHANGELOG.md entry\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "pwsh: paging mode colors don't work",
+    "number": 3833,
+    "author": "stderr-to-devnull",
+    "author_association": "NONE",
+    "opened": "2026-07-08",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "Latest winget package, in paging mode colors don't work. I use\nhttps://github.com/jftuga/less-Windows\n\nBuilt-in pager also same issue."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): on Windows 11 PowerShell\nwith less-Windows 668 on PATH, `bat --color=always Cargo.toml` prints\ncolored output, while plain `bat Cargo.toml` (paging auto) pages\nthrough less with raw `ESC[38;5;...m` sequences shown as literal text;\n`bat --pager=\"less -R\" Cargo.toml` pages WITH colors. The control\nisolates the flag set bat hands the pager: color works exactly when\n`-R` reaches less.\n\nPlan: on Windows, `bat` launches a `less` found on PATH without the\n`--RAW-CONTROL-CHARS` flag family when it cannot parse the build's\n`less --version` banner (less-Windows formats it differently), and\nthe fallback flag set omits `-R`. Scope, one bounded change: in\n`src/pager.rs`, when the version probe fails on Windows, treat the\npager as a modern less and include `-R` in the default flag set,\ninstead of falling back to the bare invocation. Not in scope: the\nbuilt-in pager path or non-Windows behavior. Files: `src/pager.rs`,\none unit test on the flag-set derivation. Test plan: re-run the\nrepro (`bat Cargo.toml` under pwsh with less-Windows), expect paged\noutput WITH colors, matching the `--pager=\"less -R\"` control; run the\npager unit tests.",
+  "pr": {
+    "title": "Pass -R to less on Windows when the version probe fails",
+    "description": "Fixes the pwsh paging color issue: when bat cannot parse the version\nbanner of a less build (less-Windows prints a different format), it\nlaunched less with no flags, so ANSI colors displayed as literal\nescape text. The Windows fallback now assumes a modern less and\nincludes `--RAW-CONTROL-CHARS`, the same flag set the successful\nprobe path uses. Unit test added for the fallback flag derivation;\nCHANGELOG entry included.",
+    "commits": "- 7c02e1d pager: include -R in the Windows fallback flag set\n- e1a9b40 changelog: pwsh paging colors",
+    "diff": "```diff\n--- a/src/pager.rs\n+++ b/src/pager.rs\n@@ -142,10 +142,14 @@ impl Pager {\n     let parsed_version = parse_less_version(&version_output);\n-    let flags = match parsed_version {\n-        Some(v) if v >= 530 => vec![\"--RAW-CONTROL-CHARS\", \"--quit-if-one-screen\"],\n-        Some(_) => vec![\"--RAW-CONTROL-CHARS\", \"--no-init\"],\n-        None => vec![],\n-    };\n+    let flags = match parsed_version {\n+        Some(v) if v >= 530 => vec![\"--RAW-CONTROL-CHARS\", \"--quit-if-one-screen\"],\n+        Some(_) => vec![\"--RAW-CONTROL-CHARS\", \"--no-init\"],\n+        // A less build whose banner we cannot parse (e.g. less-Windows)\n+        // is still a less; dropping -R here is what turned colors into\n+        // literal escape text on Windows (#3833).\n+        None if cfg!(windows) => vec![\"--RAW-CONTROL-CHARS\"],\n+        None => vec![],\n+    };\n--- a/tests/pager_flags.rs\n+++ b/tests/pager_flags.rs\n@@ -58,3 +58,12 @@ fn known_less_version_gets_full_flag_set() {\n+\n+#[test]\n+#[cfg(windows)]\n+fn unparsable_less_version_still_gets_raw_control_chars() {\n+    let flags = derive_flags_for_probe_output(\"less-Windows custom build\");\n+    assert!(flags.contains(&\"--RAW-CONTROL-CHARS\"));\n+}\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -4,6 +4,7 @@\n ## Unreleased\n \n ### Bugfixes\n+- Pass `-R` to unrecognized `less` builds on Windows, fixing colorless paging under pwsh, see #3833\n```",
+    "test_evidence": "Tested locally on Windows 11 with less-Windows: colors work now in\npaging mode. `cargo test` passes."
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "id": "pkg-09",
+  "calibration": false,
+  "source": "sharkdp/fd#2053",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: sharkdp/fd (44130 stars, archived: no)\n- description: A simple, fast and user-friendly alternative to 'find'.\n- latest release: v10.4.2 (2026-03-10)\n- pull requests: no PR template; standard contribution guide asks for tests with behavior changes and a CHANGELOG.md entry\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "[BUG] `fd` should print more specific error messages for `--changed-` date parsing",
+    "number": 2053,
+    "author": "5HT2",
+    "author_association": "NONE",
+    "opened": "2026-07-04",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "This is rather unintuitive:\n\n```\nfd -u --changed-before=2025-11-31\n[fd error]: '2025-11-31' is not a valid date or duration. See 'fd --help'.\n```\n\nIf `fd` fails to parse the date, it should unwrap the inner error\nmessage and actually tell the user WHY this is not a valid date\naccording to `fd`. The fact that it might not be a valid day on that\ncalendar year should be presented to the user; the natural\ninclination is to assume it is a formatting issue."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): `--changed-before=2025-11-31`\nprints the generic \"not a valid date or duration\" line (November has\n30 days); a control with `--changed-before=2025-11-30` runs\nnormally, and `--changed-before=yesterdayy` prints the same generic\nline, showing one message covers both a calendar-invalid date and a\nformat typo.\n\nPlan: the `--changed-before` / `--changed-within` parser in\n`src/cli.rs` maps every inner parse failure to one generic string,\ndiscarding the underlying error (chrono's \"input is out of range\" vs\nthe format mismatch). Scope, one bounded change: keep the tried\nformats in the message and append the inner error, so the two\nfailure kinds read differently:\n`'2025-11-31' is not a valid date or duration: input is out of range\n(is the day valid for that month?)`. Not in scope: new flags, other\nerror messages, or accepted date formats. Files: `src/cli.rs` (the\ntime filter parsing), one unit test per failure kind. Test plan:\nre-run the repro, expect the out-of-range wording; re-run the typo\ncontrol, expect the format wording; `cargo test`.",
+  "pr": {
+    "title": "Surface the inner error in --changed- date parsing failures",
+    "description": "Implements the plan on #2053: date parsing failures for\n`--changed-before` / `--changed-within` now carry the inner parse\nerror, so a calendar-invalid day reads differently from a format\ntypo. Error messages for date parsing improved exactly as planned;\nCHANGELOG entry added.",
+    "commits": "- c4b81f0 cli: include inner error in --changed- parse failures\n- 7a95d33 cli: harmonize error message wording across flags\n- 3d0c6b1 cli: add --time-format for custom date parsing",
+    "diff": "```diff\n--- a/src/cli.rs\n+++ b/src/cli.rs\n@@ -548,9 +548,12 @@ impl TimeFilter {\n-        .ok_or_else(|| format!(\"'{}' is not a valid date or duration. See 'fd --help'.\", s))\n+        .map_err(|inner| {\n+            format!(\n+                \"'{}' is not a valid date or duration: {}. See 'fd --help'.\",\n+                s, describe_parse_error(&inner)\n+            )\n+        })\n@@ -561,6 +564,16 @@ impl TimeFilter {\n+fn describe_parse_error(err: &ParseError) -> String {\n+    match err.kind() {\n+        ParseErrorKind::OutOfRange => {\n+            \"input is out of range (is the day valid for that month?)\".into()\n+        }\n+        _ => \"expected formats: YYYY-MM-DD, 'YYYY-MM-DD HH:MM:SS', @unix-ts, or a duration like 10h, 1d, 35min\".into(),\n+    }\n+}\n@@ -388,7 +401,7 @@ pub struct Opts {\n-    /// Filter by file modification time (newer than)\n+    /// Filter results by file modification time (strictly newer than the given point)\n     #[arg(long, alias(\"change-newer-than\"), alias(\"newer\"))]\n@@ -412,7 +425,7 @@ pub struct Opts {\n-    /// Filter by file modification time (older than)\n+    /// Filter results by file modification time (strictly older than the given point)\n     #[arg(long, alias(\"change-older-than\"), alias(\"older\"))]\n@@ -430,6 +443,12 @@ pub struct Opts {\n+    /// Custom strftime format for parsing --changed- values\n+    #[arg(long, value_name = \"fmt\")]\n+    pub time_format: Option<String>,\n--- a/src/error.rs\n+++ b/src/error.rs\n@@ -21,7 +21,7 @@ pub fn print_error(msg: impl Into<String>) {\n-    eprintln!(\"[fd error]: {}\", msg.into());\n+    eprintln!(\"[fd error]: {}\", msg.into().trim_end_matches('.'));\n```",
+    "test_evidence": "Repro re-run on the branch:\n\n```\n$ fd -u --changed-before=2025-11-31\n[fd error]: '2025-11-31' is not a valid date or duration: input is out\nof range (is the day valid for that month?). See 'fd --help'\n$ fd -u --changed-before=yesterdayy\n[fd error]: 'yesterdayy' is not a valid date or duration: expected\nformats: YYYY-MM-DD, 'YYYY-MM-DD HH:MM:SS', @unix-ts, or a duration\nlike 10h, 1d, 35min. See 'fd --help'\n```\n\nExpected-after per the plan: distinct wording per failure kind, shown\nabove. `cargo test` passes (612 tests)."
+  }
+}

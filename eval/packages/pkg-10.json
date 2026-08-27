@@ -1,0 +1,56 @@
+{
+  "id": "pkg-10",
+  "calibration": false,
+  "source": "laurent22/joplin#16215",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: laurent22/joplin (56002 stars, archived: no)\n- description: Joplin - the privacy-focused note taking app with sync capabilities for Windows, macOS, Linux, Android and iOS.\n- latest release: v3.6.15 (2026-06-20)\n- pull requests: no PR template; the contributing guide asks that PRs reference the issue, keep changes minimal, and pass the test suite (yarn test)\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "WebDAV sync ETIMEDOUT returns in 3.7.10: 250 ms autoSelectFamily timeout aborts slow connections",
+    "number": 16215,
+    "author": "PandaWood",
+    "author_association": "NONE",
+    "opened": "2026-08-16",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "Follow-up to #16201: the previous fix (#15983) addressed Koofr's 405\nrejection of the `If-None-Match` header, which cannot produce an\n`ETIMEDOUT`; the timeout symptom has a separate root cause that still\nreproduces on 3.7.10.\n\nSync fails intermittently with\n`FetchError: request to https://app.koofr.net/... failed, reason: Code: ETIMEDOUT`\nwhile `curl` and a current system Node succeed instantly against the\nsame URL. Root cause: Node's Happy Eyeballs implementation\n(`autoSelectFamily`) races connection attempts across all resolved\naddresses, aborting each attempt after\n`autoSelectFamilyAttemptTimeout`; Joplin's bundled runtime defaults\nthat to 250 ms. `app.koofr.net` resolves to two A records and TCP\nconnect from the reporter's location consistently takes 320-360 ms,\nso every attempt is aborted. Environment: Joplin 3.7.10 AppImage,\nElectron 42.3.0, bundled Node 24.15.0, Arch Linux."
+  },
+  "comments_total": 7,
+  "thread_highlights": [
+    {
+      "date": "2026-08-17",
+      "author": "mrjo118",
+      "author_association": "COLLABORATOR",
+      "summary_markdown": "asks whether other clients get decent speed from Koofr; probing VPN or distance as factors."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "PandaWood",
+      "author_association": "NONE",
+      "summary_markdown": "notes that treating over-250ms connects as \"bad servers\" would rule out intercontinental WebDAV use generally."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "PandaWood",
+      "author_association": "NONE",
+      "summary_markdown": "background: Node took 250 ms from RFC 8305 but not the algorithm; in the RFC it starts a parallel fallback, in Node it aborts the attempt."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "mrjo118",
+      "author_association": "COLLABORATOR",
+      "summary_markdown": "has made a code change to try to fix this and built a development binary for Windows for testing."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): with the bundled runtime,\n`getDefaultAutoSelectFamilyAttemptTimeout()` prints 250; syncing\nagainst a WebDAV endpoint whose TCP connect is delayed to ~350 ms\n(tc netem in the report) fails with the empty-reason ETIMEDOUT on\n3.7.10, while the same target syncs cleanly with the delay removed,\nisolating the attempt timeout as the trigger.\n\nPlan: raise the auto-select-family attempt timeout for Joplin's\nnetwork stack rather than disabling the mechanism. Scope, one\nbounded change: in the desktop app's node-fetch agent setup\n(`packages/lib/shim-init-node.ts`), set\n`autoSelectFamilyAttemptTimeout` to 2000 ms on the agents used for\nsync requests, keeping Happy Eyeballs enabled. Not in scope: mobile,\nthe request layer's retry logic, or per-target configuration. Files:\n`packages/lib/shim-init-node.ts`, one unit test asserting the agent\noption. Test plan: re-run the delayed-connect repro, expect sync to\nsucceed with the 350 ms connect (before: ETIMEDOUT; after: success),\nand `yarn test` on the lib package.",
+  "pr": {
+    "title": "Fix WebDAV ETIMEDOUT on slow connections: raise autoSelectFamily attempt timeout",
+    "description": "Fixes #16215. Node's default 250 ms `autoSelectFamilyAttemptTimeout`\naborts connection attempts to servers whose TCP connect takes longer,\nwhich is routine for intercontinental WebDAV targets. The sync\nagents now use a 2000 ms attempt timeout, keeping Happy Eyeballs\nenabled, per the plan on the thread. Verified working: I have been\nsyncing against Koofr for a full day on this build with no timeouts.",
+    "commits": "- 5d19c02 shim: raise autoSelectFamilyAttemptTimeout to 2000ms for sync agents",
+    "diff": "```diff\n--- a/packages/lib/shim-init-node.ts\n+++ b/packages/lib/shim-init-node.ts\n@@ -204,12 +204,18 @@ function setupProxySettings(options: ProxySettings) {\n const httpAgent_ = new http.Agent({\n     keepAlive: true,\n     maxSockets: 10,\n+    // Node aborts each Happy Eyeballs connection attempt after\n+    // autoSelectFamilyAttemptTimeout (default 250 ms), which kills\n+    // intercontinental WebDAV connects outright (#16215). Keep the\n+    // mechanism, give attempts room to actually connect.\n+    autoSelectFamilyAttemptTimeout: 2000,\n });\n \n const httpsAgent_ = new https.Agent({\n     keepAlive: true,\n     maxSockets: 10,\n+    autoSelectFamilyAttemptTimeout: 2000,\n });\n--- a/packages/lib/shim-init-node.test.ts\n+++ b/packages/lib/shim-init-node.test.ts\n@@ -66,3 +66,10 @@ describe('shim-init-node', () => {\n+\n+    it('sync agents allow slow connects under autoSelectFamily', () => {\n+        const { httpAgent, httpsAgent } = testAgents();\n+        expect(httpAgent.options.autoSelectFamilyAttemptTimeout).toBe(2000);\n+        expect(httpsAgent.options.autoSelectFamilyAttemptTimeout).toBe(2000);\n+    });\n```",
+    "test_evidence": "Verified working on my machine: a full day of WebDAV syncs against\nKoofr on this build with zero ETIMEDOUT errors. The change is a\ntwo-line agent option, so no further testing seemed necessary."
+  }
+}

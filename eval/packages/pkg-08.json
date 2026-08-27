@@ -1,0 +1,44 @@
+{
+  "id": "pkg-08",
+  "calibration": false,
+  "source": "jesseduffield/lazygit#5883",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: jesseduffield/lazygit (81448 stars, archived: no)\n- description: simple terminal UI for git commands.\n- latest release: v0.64.1 (2026-08-12)\n- pull requests: template asks for a PR Description and a requirements checklist: cheatsheets up to date (go generate), code formatted, tests added or updated (integration test guide linked), text internationalised, new UserConfig entries hot-reloadable and documented\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "[UX] Pressing 's' to stash untracked files accepts a name but silently does nothing",
+    "number": 5883,
+    "author": "ThatOn3Gu7",
+    "author_association": "NONE",
+    "opened": "2026-07-31",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "With an untracked file focused in the Files panel, pressing `s`\n(stash) opens the \"Stash name\" popup as if everything is good to go.\nAfter typing a name and hitting Enter, the popup closes and nothing\nhappens: the file remains untracked, no stash is created, and no\ntoast or error explains why. Standard `git stash` ignores untracked\nfiles by default, so the failure makes sense under the hood, but the\nname prompt appearing makes the silent failure confusing\n(`Shift+S`, stash-including-untracked, is what actually works).\n\nSteps: create an untracked file in a repo with no other changes,\npress `s` in the Files panel, type a name, press Enter. The prompt\ndisappears; nothing is stashed; no notification.\n\nIdeas from the report: an error toast pointing at `Shift+S`, a\nfallback prompt to include untracked files, or suppressing the name\nprompt when nothing can be stashed."
+  },
+  "comments_total": 2,
+  "thread_highlights": [
+    {
+      "date": "2026-07-31",
+      "author": "ThatOn3Gu7",
+      "author_association": "NONE",
+      "summary_markdown": "hopes for a fix soon."
+    },
+    {
+      "date": "2026-08-08",
+      "author": "bhallashivam1997",
+      "author_association": "NONE",
+      "summary_markdown": "says they pushed a fix for the bug."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): repo with a single\nuntracked file; `s`, a name, Enter: popup closes, `git stash list`\nempty, no toast (screen capture in the report); control with one\ntracked modification: same flow creates the stash, isolating\nuntracked-only state as the trigger.\n\nPlan: the stash handler runs `git stash push` without\n`--include-untracked` and discards its \"No local changes to save\"\noutcome, so untracked-only state fails after the prompt with no\nsignal. Scope, one bounded change, the report's first idea (smallest\nsurface): before opening the name prompt in the files controller,\ncheck whether any tracked change exists; when only untracked files\nare present, show an error toast naming `Shift+S` instead of opening\nthe prompt. Not in scope: changing stash semantics or adding a\nfallback prompt flow. Files:\n`pkg/gui/controllers/files_controller.go`, the i18n english set, one\nintegration test. Test plan: re-run the repro, expect the toast\n(with the untracked file still present) and no name prompt; control\nwith a tracked change still stashes; run the integration test.",
+  "pr": {
+    "title": "Show an error instead of the stash prompt when only untracked files exist",
+    "description": "PR Description: pressing `s` with only untracked files opened a\nstash-name prompt whose stash silently failed (#5883, plan posted on\nthe thread). The files controller now checks for stashable tracked\nchanges first and shows an error toast pointing at the\nstash-include-untracked binding, so the dead-end prompt never opens.\n\nRequirements: cheatsheets regenerated (no binding changes, no diff);\ncode formatted; integration test added; new error text\ninternationalised; no UserConfig changes.",
+    "commits": "- 8e02c1a files: error toast instead of stash prompt when nothing is stashable\n- 1f9d4b7 i18n: add CannotStashUntrackedOnly text + integration test",
+    "diff": "```diff\n--- a/pkg/gui/controllers/files_controller.go\n+++ b/pkg/gui/controllers/files_controller.go\n@@ -612,6 +612,13 @@ func (self *FilesController) handleStashChanges() error {\n func (self *FilesController) stash() error {\n+    // `git stash push` without --include-untracked has nothing to do\n+    // when only untracked files exist; the prompt would accept a name\n+    // and silently do nothing (#5883). Fail loudly before prompting.\n+    if !self.c.Model().AnyTrackedChanges() {\n+        return self.c.ErrorMsg(self.c.Tr.CannotStashUntrackedOnly)\n+    }\n     return self.c.Prompt(types.PromptOpts{\n         Title: self.c.Tr.StashChanges,\n--- a/pkg/i18n/english.go\n+++ b/pkg/i18n/english.go\n@@ -1481,6 +1481,7 @@ type TranslationSet struct {\n     StashChanges string\n+    CannotStashUntrackedOnly string\n@@ -2214,6 +2215,7 @@ func EnglishTranslationSet() *TranslationSet {\n         StashChanges: \"Stash changes\",\n+        CannotStashUntrackedOnly: \"No tracked changes to stash. To stash untracked files, use stash-include-untracked (default: 'S').\",\n--- a/pkg/integration/tests/stash/stash_untracked_only_errors.go\n+++ b/pkg/integration/tests/stash/stash_untracked_only_errors.go\n@@ -0,0 +1,20 @@\n+var StashUntrackedOnlyErrors = NewIntegrationTest(NewIntegrationTestArgs{\n+    Description:  \"Pressing stash with only untracked files shows an error instead of a dead prompt\",\n+    SetupRepo: func(shell *Shell) {\n+        shell.CreateFile(\"untracked.txt\", \"hello\")\n+    },\n+    Run: func(t *TestDriver, keys config.KeybindingConfig) {\n+        t.Views().Files().\n+            Focus().\n+            Press(keys.Files.StashAllChanges) // the plain 's' stash\n+        t.ExpectToast(Contains(\"No tracked changes to stash\"))\n+        t.Views().Files().Lines(Contains(\"untracked.txt\"))\n+    },\n+})\n```",
+    "test_evidence": "Repro re-run on the branch:\n\n```\nbefore: s -> \"Stash name\" prompt -> Enter -> nothing (stash list empty)\nafter:  s -> toast \"No tracked changes to stash. To stash untracked\n        files, use stash-include-untracked (default: 'S').\" -> no\n        prompt; untracked.txt still listed\n```\n\nExpected-after per the plan: the toast instead of the prompt, file\nuntouched. Control: with a tracked modification staged, `s` still\nprompts and creates the stash. Integration test\n`stash_untracked_only_errors` passes; `go test ./...` passes;\n`go generate ./...` produces no cheatsheet diff."
+  }
+}

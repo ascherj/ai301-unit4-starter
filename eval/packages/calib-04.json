@@ -1,0 +1,29 @@
+{
+  "id": "calib-04",
+  "calibration": true,
+  "source": "sharkdp/fd#2078",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: sharkdp/fd (44130 stars, archived: no)\n- description: A simple, fast and user-friendly alternative to 'find'.\n- latest release: v10.4.2 (2026-03-10)\n- pull requests: no PR template; standard contribution guide asks for tests with behavior changes and a CHANGELOG.md entry\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "`--threads` accepts unsatisfiable values and panics or aborts during channel allocation and thread creation",
+    "number": 2078,
+    "author": "leeewee",
+    "author_association": "NONE",
+    "opened": "2026-07-28",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "`fd --threads N` (`-j N`) parses `N` into an unbounded `NonZeroUsize`\n(`src/cli.rs:556`) and uses it to (1) construct a channel with\ncapacity `2 * threads` and (2) create exec worker threads for\nnon-batched `--exec`. Excessive but syntactically valid values\nsurface as panics or aborts rather than user-facing errors:\n\n1. Channel-capacity multiply overflow, every run:\n   `fd -j 9223372036854775807 .` panics `capacity overflow`, exit\n   101 (`src/walk.rs:646`, `bounded(2 * config.threads)`).\n2. Thread-spawn exhaustion with non-batched `--exec`:\n   `fd -j 200000 -x echo .` aborts `failed to spawn thread`, exit\n   134 (`src/walk.rs:425`)."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): both invocations re-run\non v10.4.2: the huge `-j` value panics with `capacity overflow`\n(exit 101) on a plain run, and `-j 200000 -x echo` aborts with\n`failed to spawn thread` (exit 134); a control at `-j 64` runs both\nmodes cleanly.\n\nPlan: validate the thread count where it is parsed instead of\nletting it flow into allocation. Scope, one bounded change: in\n`src/cli.rs`, cap `--threads` at a sane maximum (the plan proposes\n4096, far above any real machine) and reject larger values with a\nnormal argument error naming the cap. Not in scope: changing the\nchannel sizing formula or the exec worker pool design. Files:\n`src/cli.rs`, tests. Test plan, both failure modes by name: re-run\nrepro 1 (`-j 9223372036854775807 .`), expect the argument error and\na normal exit code; re-run repro 2 (`-j 200000 -x echo .`), expect\nthe same argument error (200000 exceeds the cap), no abort; the\n`-j 64` control unchanged; `cargo test`.",
+  "pr": {
+    "title": "Reject --threads values above a sane cap instead of panicking",
+    "description": "Implements the plan on #2078: `--threads` now validates its value at\nparse time against a cap of 4096 and rejects larger values with a\nnormal clap argument error, so unsatisfiable thread counts can no\nlonger reach channel allocation or thread spawning as panics or\naborts. CHANGELOG entry and tests included.",
+    "commits": "- 6a95d02 cli: cap --threads at 4096 with a proper argument error",
+    "diff": "```diff\n--- a/src/cli.rs\n+++ b/src/cli.rs\n@@ -552,9 +552,20 @@ pub struct Opts {\n     /// Set number of threads to use for searching & executing\n-    #[arg(long, short = 'j', value_name = \"num\", hide_short_help = true)]\n-    pub threads: Option<NonZeroUsize>,\n+    #[arg(long, short = 'j', value_name = \"num\", hide_short_help = true,\n+          value_parser = parse_thread_count)]\n+    pub threads: Option<NonZeroUsize>,\n@@ -601,6 +612,19 @@ impl Opts {\n+/// A thread count the process can actually satisfy: parsing an\n+/// unbounded value let `2 * threads` overflow channel capacity and\n+/// thread spawning abort (#2078).\n+const MAX_THREADS: usize = 4096;\n+\n+fn parse_thread_count(s: &str) -> Result<NonZeroUsize, String> {\n+    let n: NonZeroUsize = s\n+        .parse()\n+        .map_err(|_| format!(\"'{s}' is not a valid thread count\"))?;\n+    if n.get() > MAX_THREADS {\n+        return Err(format!(\n+            \"thread count {n} exceeds the maximum of {MAX_THREADS}\"\n+        ));\n+    }\n+    Ok(n)\n+}\n--- a/tests/tests.rs\n+++ b/tests/tests.rs\n@@ -2214,3 +2214,14 @@ fn test_threads_flag() {\n+\n+#[test]\n+fn test_threads_over_cap_is_an_argument_error() {\n+    // #2078, failure mode 1: must be a normal error, not an abort.\n+    let te = TestEnv::new(&[], &[]);\n+    te.assert_failure_with_error(\n+        &[\"-j\", \"9223372036854775807\", \".\"],\n+        \"exceeds the maximum of 4096\",\n+    );\n+}\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -6,6 +6,7 @@\n ### Bugfixes\n+- `--threads` now rejects values above 4096 with a proper error instead of panicking, see #2078\n```",
+    "test_evidence": "Repro 1 re-run on the branch:\n\n```\n$ fd -j 9223372036854775807 .\n# before: thread 'main' panicked ... capacity overflow (exit 101)\n# after:\nerror: invalid value '9223372036854775807' for '--threads <num>':\nthread count 9223372036854775807 exceeds the maximum of 4096\n$ echo $?\n2\n```\n\nExpected-after per the plan: a normal argument error and a normal\nexit code, shown above. `-j 64` control unchanged. `cargo test`\npasses (614 tests)."
+  }
+}

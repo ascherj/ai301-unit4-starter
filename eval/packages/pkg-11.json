@@ -1,0 +1,36 @@
+{
+  "id": "pkg-11",
+  "calibration": false,
+  "source": "BurntSushi/ripgrep#3477",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: BurntSushi/ripgrep (67388 stars, archived: no)\n- description: ripgrep recursively searches directories for a regex pattern while respecting your gitignore.\n- latest release: 15.2.0 (2026-07-15)\n- pull requests: no PR template; the contribution docs ask for tests with behavior changes and concise, focused PRs\n- contribution policy (CONTRIBUTING.md section \"Use of AI\", AI_POLICY.md): AI-assisted coding is welcome with a human in the loop who understands the work; comments to maintainers must be written by humans in their own words, and AI-generated comments may be hidden"
+  },
+  "issue": {
+    "title": "Escaped trailing space in .gitignore causes dangling \\ error (differs from git)",
+    "number": 3477,
+    "author": "LordAizen1",
+    "author_association": "NONE",
+    "opened": "2026-07-17",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "A small mismatch with how git handles escaped trailing spaces in\n.gitignore. With `foo\\ ` followed by two more spaces in .gitignore\n(a backslash-escaped space, then unescaped trailing spaces):\n\n```\n$ git check-ignore -v 'foo '\n.gitignore:1:foo\\       foo\n```\n\nGit accepts this and ignores `foo ` correctly. But ripgrep errors:\n\n```\n$ rg hi\nrg: ./.gitignore: line 1: error parsing glob 'foo\\': dangling '\\'\n```\n\nGit trims normal trailing spaces but keeps the escaped one; ripgrep\ntrims the escaped space as well, leaving `foo\\`, which becomes a\ndangling backslash and a parse error. Expected: no parse error, and\nthe pattern matches `foo ` (like #2236, where a valid but uncommon\npattern caused a dangling `\\` error and was fixed)."
+  },
+  "comments_total": 1,
+  "thread_highlights": [
+    {
+      "date": "2026-08-18",
+      "author": "HarnageaGabriel",
+      "author_association": "NONE",
+      "summary_markdown": "investigating a fix; taking a fresh look at the trailing-whitespace/backslash handling in the gitignore glob parser."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): `.gitignore` written with\n`printf 'foo\\\\   \\n'` (verified with `od -c`); `rg hi` errors with\n`dangling '\\'` while `git check-ignore -v 'foo '` matches; a control\nwithout the trailing unescaped spaces (`foo\\ ` exactly) parses fine\nin both tools, isolating the trim step as the divergence.\n\nPlan: the gitignore line parser in `crates/ignore/src/gitignore.rs`\nstrips trailing whitespace without checking whether the last space\nis backslash-escaped. Scope, one bounded change: trim trailing\nspaces only up to the first escaped space (a space preceded by an\nodd number of backslashes stays), matching git's documented\nbehavior. Not in scope: any other whitespace or escape semantics.\nFiles: `crates/ignore/src/gitignore.rs`, tests in the same file.\nTest plan: re-run the repro, expect no parse error and `foo ` to be\nignored (parity with `git check-ignore`); `cargo test -p ignore`.",
+  "pr": {
+    "title": "ignore: keep backslash-escaped trailing space when trimming gitignore lines",
+    "description": "Trailing-space trimming in the gitignore parser also removed an\nescaped trailing space, leaving a dangling backslash and a parse\nerror where git accepts the pattern (#3477). The trim now stops at a\nspace preceded by an odd number of backslashes, matching git. One\nfunction touched, tests added for the escaped, unescaped, and\ndouble-backslash cases. Per the repo's AI policy: this change was\nAI-assisted with me reviewing and understanding every line, and this\ntext is in my own words.",
+    "commits": "- 6b93e11 ignore: stop trailing-space trim at escaped spaces",
+    "diff": "```diff\n--- a/crates/ignore/src/gitignore.rs\n+++ b/crates/ignore/src/gitignore.rs\n@@ -518,10 +518,23 @@ fn parse_gitignore_line(line: &str) -> Option<Glob> {\n-    // Trailing whitespace is ignored unless it is escaped.\n-    let line = line.trim_end_matches(' ');\n+    // Trailing whitespace is ignored unless it is escaped: git trims\n+    // unescaped trailing spaces but keeps a space preceded by an odd\n+    // number of backslashes (gitignore(5)). Trimming past the escape\n+    // left a dangling '\\' (#3477).\n+    let line = trim_unescaped_trailing_spaces(line);\n@@ -545,6 +558,20 @@ fn parse_gitignore_line(line: &str) -> Option<Glob> {\n+fn trim_unescaped_trailing_spaces(line: &str) -> &str {\n+    let bytes = line.as_bytes();\n+    let mut end = bytes.len();\n+    while end > 0 && bytes[end - 1] == b' ' {\n+        let backslashes =\n+            bytes[..end - 1].iter().rev().take_while(|&&b| b == b'\\\\').count();\n+        if backslashes % 2 == 1 {\n+            break;\n+        }\n+        end -= 1;\n+    }\n+    &line[..end]\n+}\n@@ -1108,3 +1135,15 @@ mod tests {\n+    #[test]\n+    fn escaped_trailing_space_is_kept() {\n+        // #3477: 'foo\\ ' plus unescaped trailing spaces must parse and\n+        // match \"foo \" like git does.\n+        let gi = gitignore_from_str(\"foo\\\\   \\n\");\n+        assert!(gi.matched(\"foo \", false).is_ignore());\n+        assert!(!gi.matched(\"foo\", false).is_ignore());\n+        let gi = gitignore_from_str(\"foo\\\\\\\\   \\n\");\n+        assert!(gi.matched(\"foo\\\\\", false).is_ignore());\n+    }\n```",
+    "test_evidence": "Repro re-run on the branch:\n\n```\n$ printf 'foo\\\\   \\n' > .gitignore\n$ rg hi                      # before: rg: ./.gitignore: line 1: error\n                             # parsing glob 'foo\\': dangling '\\'\n$ rg hi                      # after: searches normally, no error\n$ touch 'foo '\n$ rg --files                 # after: 'foo ' not listed (ignored),\n                             # matching git check-ignore -v 'foo '\n```\n\nExpected-after per the plan: no parse error and parity with git on\n`foo `. `cargo test -p ignore` passes (214 tests)."
+  }
+}

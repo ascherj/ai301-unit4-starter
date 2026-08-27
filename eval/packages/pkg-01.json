@@ -1,0 +1,40 @@
+{
+  "id": "pkg-01",
+  "calibration": false,
+  "source": "pandas-dev/pandas#66657",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: pandas-dev/pandas (49517 stars, archived: no)\n- description: Flexible and powerful data analysis / manipulation library for Python, providing labeled data structures similar to R data.frame objects, statistical functions, and much more.\n- latest release: v3.0.5 (2026-07-22)\n- pull requests: the PR template is a required checklist: closes #xxxx with the issue number, tests added and passed, all code checks passed (pre-commit), type annotations added to new arguments, and an entry in the latest doc/source/whatsnew/vX.X.X.rst when fixing a bug\n- contribution policy (contributing guide): standard contribution guide with a documented development workflow; no stated AI policy"
+  },
+  "issue": {
+    "title": "BUG: read_csv (c engine) heap buffer overflow on short rows before a wide field",
+    "number": 66657,
+    "author": "SABITHSAHEB",
+    "author_association": "NONE",
+    "opened": "2026-08-08",
+    "state": "open",
+    "labels": [
+      "Bug",
+      "IO CSV",
+      "Segfault"
+    ],
+    "body_markdown": "With the C engine, `read_csv` reserves the token stream once per read\nbuffer for the worst case that the whole buffer is copied 1:1, and the\nbulk-copy fast paths in `tokenize_bytes` then write field bytes with no\nper-copy capacity check. When a row has fewer fields than expected,\n`end_line` closes the missing fields by writing a NUL terminator for\neach one. Those synthetic terminators take stream space but consume no\ninput, so a run of short rows eats into the reservation the bulk copies\nrely on; it is restored only for the terminators themselves, not for\nthe input still waiting to be copied.\n\nRepro (41 rows, 5000 expected columns, then one 100,000-char field):\n\n```python\nimport io\nimport pandas as pd\n\nn_cols = 5000\nwide = \"X\" * 100_000\ndata = \"a\\n\" * 40 + wide + \"\\n\"\n\ndf = pd.read_csv(io.StringIO(data), header=None,\n                 names=[f\"c{i}\" for i in range(n_cols)])\nprint(df.shape)              # (41, 5000) as expected\nprint(len(df.iloc[40, 0]))   # 99999, but the field is 100000 chars\n```\n\nBuilding with ASAN reports a heap-buffer-overflow WRITE in\n`tokenize_bytes`; in a normal build the last field silently loses its\nfinal byte (or corrupts the heap)."
+  },
+  "comments_total": 1,
+  "thread_highlights": [
+    {
+      "date": "2026-08-09",
+      "author": "DresdenGman",
+      "author_association": "NONE",
+      "summary_markdown": "strong, concrete parser bug: small repro, clear failure mode, actionable ASAN signal. Suggests isolating the stream-space reservation path around `tokenize_bytes` / `end_line` and checking whether short-row padding needs to reserve input-carrying space."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's script re-run\non main under ASAN shows `heap-buffer-overflow WRITE` at the stream\ncopy in `tokenize_bytes`; without short rows before the wide field\n(`data = wide + \"\\n\"`), the same wide field parses cleanly, isolating\nthe short-row padding as the trigger.\n\nPlan: the reservation drift is in `end_line`'s missing-field padding:\n`make_stream_space(ex_fields - fields)` accounts for the synthetic\nterminators but not for the input bytes still pending in the buffer.\nScope, one bounded change: in\n`pandas/_libs/src/parser/tokenizer.c`, make the bulk-copy paths in\n`tokenize_bytes` check remaining stream capacity before copying and\ncall `make_stream_space` for the pending copy length when short-row\npadding has consumed the reservation. Not in scope: restructuring the\none-reservation-per-buffer design or the SIMD fast paths themselves.\nFiles: `pandas/_libs/src/parser/tokenizer.c`, one regression test in\n`pandas/tests/io/parser/test_c_parser_only.py`. Test plan: re-run the\nissue's script, expect `len(df.iloc[40, 0]) == 100000` and a clean\nASAN run; run the parser test suite.",
+  "pr": {
+    "title": "Fix read_csv C engine heap overflow on short rows before a wide field",
+    "description": "The C tokenizer under-reserves stream space when short rows pad\nmissing fields, and a following wide field then writes past the\nreservation. This adds a capacity check to the bulk-copy path so the\nstream is regrown for the pending copy when padding has consumed the\nreservation. A regression test pins the short-rows-then-wide-field\nshape; test evidence below.",
+    "commits": "- 41c9f27 parser: reserve stream space for pending copy after short-row padding\n- 88d20ab test: regression case for short rows before a wide field",
+    "diff": "```diff\n--- a/pandas/_libs/src/parser/tokenizer.c\n+++ b/pandas/_libs/src/parser/tokenizer.c\n@@ -1096,6 +1096,15 @@ static int tokenize_bytes(parser_t *self,\n     char *stream;\n     char *buf = self->data + self->datapos;\n \n+    // Short rows pad missing fields with synthetic NUL terminators;\n+    // make_stream_space() restores space for the terminators only,\n+    // not for input still waiting to be copied, so the 1:1 buffer\n+    // reservation no longer covers the remaining copy. Regrow here.\n+    int64_t pending = self->datalen - self->datapos;\n+    if (self->stream_len + pending >= self->stream_cap &&\n+        make_stream_space(self, (size_t)pending) < 0) {\n+        int64_t bufsize = 100;\n+        self->error_msg = malloc(bufsize);\n+        snprintf(self->error_msg, bufsize, \"out of memory\");\n+        return -1;\n+    }\n     if (make_stream_space(self, self->datalen - self->datapos) < 0) {\n         int64_t bufsize = 100;\n         self->error_msg = malloc(bufsize);\n--- a/pandas/tests/io/parser/test_c_parser_only.py\n+++ b/pandas/tests/io/parser/test_c_parser_only.py\n@@ -733,3 +733,17 @@ def test_bytes_exceed_2gb(c_parser_only):\n+\n+\n+def test_short_rows_before_wide_field(c_parser_only):\n+    # GH 66657: short-row padding consumed the stream reservation and\n+    # a following wide field overflowed the token stream.\n+    parser = c_parser_only\n+    wide = \"X\" * 100_000\n+    data = \"a\\n\" * 40 + wide + \"\\n\"\n+    result = parser.read_csv(\n+        StringIO(data), header=None, names=[f\"c{i}\" for i in range(5000)]\n+    )\n+    assert result.shape == (41, 5000)\n+    assert len(result.iloc[40, 0]) == 100_000\n```",
+    "test_evidence": "Issue repro re-run on the branch:\n\n```\n$ python repro_66657.py           # before (main): len == 99999\n(41, 5000)\n99999\n$ python repro_66657.py           # after (branch)\n(41, 5000)\n100000\n```\n\nASAN build: `main` reports heap-buffer-overflow WRITE in\ntokenize_bytes on the repro; the branch build runs the same script\nwith no ASAN report. Parser suite:\n`pytest pandas/tests/io/parser -q` passes (2841 passed, 40 skipped),\nincluding the new regression test."
+  }
+}

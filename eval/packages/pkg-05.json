@@ -1,0 +1,48 @@
+{
+  "id": "pkg-05",
+  "calibration": false,
+  "source": "nushell/nushell#18848",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: nushell/nushell (40293 stars, archived: no)\n- description: A new type of shell.\n- latest release: 0.115.0 (2026-08-15)\n- pull requests: template asks for a Description section (problem, approach, technical details) and a User-facing changes section used to generate release notes; the contributing guide is linked from the template\n- contribution policy (CONTRIBUTING.md): standard contribution guide with formatting and test commands (cargo fmt, clippy, cargo test); no stated AI policy"
+  },
+  "issue": {
+    "title": "0.115 keybinding merge-by-name silently drops bindings that share a name across different keys (breaks atuin's ctrl-r)",
+    "number": 18848,
+    "author": "motillawy",
+    "author_association": "NONE",
+    "opened": "2026-08-17",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "Since 0.115, assigning `$env.config.keybindings` merges into the\nexisting list, matching named bindings on `name` alone. A named\nbinding therefore silently replaces an earlier binding with the same\nname even when it binds a different key.\n\nThis breaks atuin's generated `init.nu` in the wild: it appends two\nkeybindings both named `atuin` (ctrl-r and up-arrow), so the up-arrow\nentry replaces the ctrl-r one and ctrl-r silently falls back to the\nbuilt-in `history_menu`. Reedline keys bindings by\n`(mode, modifier, keycode)`, and any config that reuses a name across\nkeys, which was fine before 0.115, now silently loses bindings.\n\nRepro:\n\n```nushell\n$env.config.keybindings = ($env.config.keybindings | append {name: atuin, modifier: control, keycode: char_r, mode: [emacs], event: {send: clearscreen}})\n$env.config.keybindings = ($env.config.keybindings | append {name: atuin, modifier: none, keycode: up, mode: [emacs], event: {send: clearscreen}})\n$env.config.keybindings | where name == atuin | select name modifier keycode\n```\n\nExpected: both bindings registered (pre-0.115 behavior), or at least\na warning when a merge replaces a binding that targets a different\nkey. Actual: only the up-arrow binding survives."
+  },
+  "comments_total": 3,
+  "thread_highlights": [
+    {
+      "date": "2026-08-17",
+      "author": "kronberger-droid",
+      "author_association": "CONTRIBUTOR",
+      "summary_markdown": "introduced by the completions PR; will take a look."
+    },
+    {
+      "date": "2026-08-18",
+      "author": "fdncred",
+      "author_association": "CONTRIBUTOR",
+      "summary_markdown": "thought the point of the name was uniqueness; \"Seems to me like we should just warn users of duplicate naming but maybe I'm wrong? Let me know.\""
+    },
+    {
+      "date": "2026-08-18",
+      "author": "kronberger-droid",
+      "author_association": "CONTRIBUTOR",
+      "summary_markdown": "best solution may be to warn once and merge, though that breaks when both are defined through config."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's three-line\nscript on 0.115.0 shows only the `up` binding surviving; the same\nscript on 0.114.1 shows both rows, pinning the regression to the\n0.115 merge-by-name change; `keybindings list` confirms ctrl-r falls\nback to `history_menu`.\n\nPlan: the merge in the config update path treats `name` alone as the\nbinding's identity; reedline's real identity is\n`(mode, modifier, keycode)`. Scope, one bounded change: in the\nkeybinding merge in `crates/nu-protocol/src/config/`, widen the match\nkey for named bindings to `(name, mode, modifier, keycode)` so a\nsame-name binding on a different key appends instead of replacing,\nand emit a one-time warning when a merge does replace an existing\nbinding (the thread's warn suggestion). Not in scope: enforcing name\nuniqueness or renaming semantics. Files: the config keybindings merge\nmodule and its tests. Test plan: re-run the issue's script, expect\nboth `atuin` rows; re-run with two same-name same-key bindings,\nexpect one row plus a warning; cargo test on the config crate.",
+  "pr": {
+    "title": "Keep same-name keybindings that target different keys when merging config",
+    "description": "Description: since 0.115 the keybinding merge matches named bindings\non `name` alone, so atuin's two `atuin` bindings collapse into one\nand ctrl-r silently reverts to `history_menu` (#18848). Per the plan,\nthe merge identity for named bindings is now\n`(name, mode, modifier, keycode)`: same-name bindings on different\nkeys both survive (the pre-0.115 outcome for atuin's init.nu), and a\nmerge that does replace an identical key emits a one-time warning.\nOn the thread's open question about name uniqueness (fdncred): this\nchange keeps names non-unique on purpose, since generated configs in\nthe wild already reuse them; if uniqueness is the direction the team\nsettles on, the warning gives users the migration signal first. On\nkronberger-droid's caveat that warn-and-merge breaks when both\nbindings are defined through config: that applies to schemes that\nrename one binding; nothing here renames, so two config-defined\nbindings both survive unless they collide on the same key, where the\nwarning fires on each load until the config is cleaned up.\n\nUser-facing changes: same-name keybindings on different keys are no\nlonger dropped; replacing a binding prints a warning once.",
+    "commits": "- a7c41f9 config: merge named keybindings by name and key, not name alone\n- d0b823e config: warn once when a keybinding merge replaces a binding",
+    "diff": "```diff\n--- a/crates/nu-protocol/src/config/keybindings.rs\n+++ b/crates/nu-protocol/src/config/keybindings.rs\n@@ -71,16 +71,24 @@ pub(super) fn merge_keybindings(\n-    // Named bindings merge by name: a later binding with the same name\n-    // replaces the earlier one.\n-    for incoming in new_bindings {\n-        match existing.iter_mut().find(|b| b.name == incoming.name) {\n-            Some(slot) => *slot = incoming,\n-            None => existing.push(incoming),\n-        }\n-    }\n+    // Named bindings merge by identity, not display name: reedline keys\n+    // bindings by (mode, modifier, keycode), and configs in the wild\n+    // (atuin's init.nu) reuse one name across keys. Same name on a\n+    // different key is a distinct binding and must survive the merge.\n+    for incoming in new_bindings {\n+        match existing.iter_mut().find(|b| {\n+            b.name == incoming.name\n+                && b.mode == incoming.mode\n+                && b.modifier == incoming.modifier\n+                && b.keycode == incoming.keycode\n+        }) {\n+            Some(slot) => {\n+                warn_once(\n+                    working_set,\n+                    &format!(\"keybinding '{}' redefined for the same key; replacing\", incoming.name),\n+                );\n+                *slot = incoming;\n+            }\n+            None => existing.push(incoming),\n+        }\n+    }\n--- a/crates/nu-protocol/tests/config/keybindings.rs\n+++ b/crates/nu-protocol/tests/config/keybindings.rs\n@@ -44,3 +44,21 @@ fn named_binding_replaces_same_name() {\n+\n+#[test]\n+fn same_name_different_key_both_survive() {\n+    // #18848: atuin generates ctrl-r and up-arrow both named \"atuin\".\n+    let merged = merge(vec![\n+        binding(\"atuin\", \"control\", \"char_r\"),\n+        binding(\"atuin\", \"none\", \"up\"),\n+    ]);\n+    assert_eq!(merged.iter().filter(|b| b.name == \"atuin\").count(), 2);\n+}\n+\n+#[test]\n+fn same_name_same_key_replaces_with_warning() {\n+    let (merged, warnings) = merge_with_warnings(vec![\n+        binding(\"atuin\", \"control\", \"char_r\"),\n+        binding(\"atuin\", \"control\", \"char_r\"),\n+    ]);\n+    assert_eq!(merged.iter().filter(|b| b.name == \"atuin\").count(), 1);\n+    assert_eq!(warnings.len(), 1);\n+}\n```",
+    "test_evidence": "Issue repro (the three-line script from the report) re-run before and\nafter. Before, on 0.115.0:\n\n```\n> $env.config.keybindings | where name == atuin | select name modifier keycode\n╭───┬───────┬──────────┬─────────╮\n│ # │ name  │ modifier │ keycode │\n├───┼───────┼──────────┼─────────┤\n│ 0 │ atuin │ none     │ up      │\n╰───┴───────┴──────────┴─────────╯\n```\n\nAfter, on the branch build:\n\n```\n> $env.config.keybindings | where name == atuin | select name modifier keycode\n╭───┬───────┬──────────┬─────────╮\n│ # │ name  │ modifier │ keycode │\n├───┼───────┼──────────┼─────────┤\n│ 0 │ atuin │ control  │ char_r  │\n│ 1 │ atuin │ none     │ up      │\n╰───┴───────┴──────────┴─────────╯\n```\n\nExpected-after per the plan: both rows present and ctrl-r resolves to\nthe atuin binding (`keybindings list` confirms). Same-key redefine\nprints the one-time warning. `cargo test -p nu-protocol` passes (312\ntests); fmt and clippy clean."
+  }
+}

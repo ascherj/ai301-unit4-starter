@@ -1,0 +1,42 @@
+{
+  "id": "pkg-14",
+  "calibration": false,
+  "source": "httpie/cli#1834",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: httpie/cli (38433 stars, archived: no)\n- description: HTTPie CLI: modern, user-friendly command-line HTTP client for the API era, with JSON support, colors, sessions, downloads, and plugins.\n- latest release: 3.2.4 (2024-11-01)\n- pull requests: no PR template; the contribution docs ask that changes come with tests and that the test suite passes\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "JSON content type not being set when a single header is present",
+    "number": 1834,
+    "author": "ju-ius",
+    "author_association": "NONE",
+    "opened": "2026-04-27",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "Minimal reproduction:\n\n1. `$ https post pie.dev/post -v 'header1: xyz' x=1`\n2. `$ https post pie.dev/post -v 'header1: xyz' 'header2: abc' x=1`\n\nWith exactly one custom header (step 1), the request goes out with\nthe JSON body but WITHOUT `Content-Type: application/json`: neither\nHTTPie's verbose output nor pie.dev's echo shows a request\nContent-Type. With two custom headers (step 2), the Content-Type is\nset as expected. No custom headers also behaves correctly, so the\nsingle-header case is the odd one out."
+  },
+  "comments_total": 2,
+  "thread_highlights": [
+    {
+      "date": "2026-06-01",
+      "author": "Immortal-002",
+      "author_association": "NONE",
+      "summary_markdown": "/assign"
+    },
+    {
+      "date": "2026-06-04",
+      "author": "sobhardwaj",
+      "author_association": "NONE",
+      "summary_markdown": "asks whether anyone is working on it."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): both commands re-run\nagainst a local httpbin with `-v`; the single-header request shows\nno `Content-Type` header while the two-header request shows\n`application/json`, isolating the count-dependent path; tracing in\nthe report pins the divergence to the header finalization in\n`httpie/client.py`, where the default-header merge iterates the\nuser's headers and skips the JSON defaults when the parsed header\nstructure is a single bare entry rather than a list.\n\nPlan: the default-header merge normalizes the user's parsed headers\nbefore merging in the JSON defaults; the single-entry shape misses\nthe normalization, so the JSON `Content-Type` default is dropped.\nScope, one bounded change: normalize the parsed header collection to\nthe list shape before the merge in `httpie/client.py`\n(`make_default_headers` / its merge call site), so defaults apply\nregardless of how many custom headers were given. Not in scope:\nheader casing, session headers, or any CLI surface. Files:\n`httpie/client.py`, `tests/test_httpie.py`. Test plan: re-run both\nrepro commands, expect `Content-Type: application/json` on the\nrequest in BOTH, and an unchanged two-header control; run the test\nsuite.",
+  "pr": {
+    "title": "Fix JSON Content-Type dropped when exactly one custom header is set",
+    "description": "Implements the plan on #1834: the default-header merge in\n`client.py` now normalizes the parsed header collection before\nmerging JSON defaults, so a single custom header no longer suppresses\n`Content-Type: application/json`. Tests added; all tests pass.",
+    "commits": "- 2ab7c31 client: normalize parsed headers before merging JSON defaults",
+    "diff": "```diff\n--- a/httpie/client.py\n+++ b/httpie/client.py\n@@ -172,10 +172,14 @@ def make_default_headers(args: argparse.Namespace) -> HTTPHeadersDict:\n-    for name, value in args.headers.items():\n-        if name.lower() in default_headers and value is not None:\n-            del default_headers[name]\n+    # A single parsed header arrives as a bare entry, not a list; the\n+    # merge must see one shape or JSON defaults get dropped (#1834).\n+    user_headers = normalize_header_items(args.headers)\n+    for name, value in user_headers:\n+        if name.lower() in default_headers and value is not None:\n+            del default_headers[name]\n@@ -196,6 +200,13 @@ def make_default_headers(args: argparse.Namespace) -> HTTPHeadersDict:\n+def normalize_header_items(headers) -> list:\n+    items = headers.items() if hasattr(headers, 'items') else headers\n+    return [item if isinstance(item, tuple) else (item.key, item.value)\n+            for item in items]\n--- a/tests/test_httpie.py\n+++ b/tests/test_httpie.py\n@@ -412,3 +412,11 @@ def test_json_default_headers(httpbin):\n+\n+def test_header_casing_preserved(httpbin):\n+    r = http('GET', httpbin.url + '/headers', 'X-Custom-Header: value')\n+    assert r.json['headers']['X-Custom-Header'] == 'value'\n```",
+    "test_evidence": "Verified with a GET request carrying one custom header: the header\narrives with its casing preserved and the request succeeds.\n\n```\n$ http GET pie.dev/headers 'X-Custom-Header: value'\n{\n    \"headers\": {\n        \"X-Custom-Header\": \"value\",\n        ...\n    }\n}\n```\n\nAll tests pass."
+  }
+}

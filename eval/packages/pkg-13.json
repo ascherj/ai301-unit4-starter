@@ -1,0 +1,32 @@
+{
+  "id": "pkg-13",
+  "calibration": false,
+  "source": "neovim/neovim#41337",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: neovim/neovim (101857 stars, archived: no)\n- description: Vim-fork focused on extensibility and usability.\n- latest release: v0.12.4 (2026-07-05)\n- pull requests: template asks for a Problem section and a Solution section; the contributing guide's PR rules (commit message conventions, tests for behavior changes) are linked from the template\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "`vim.ui.open()` URL truncation on Windows when URL contains `&`",
+    "number": 41337,
+    "author": "mxlnmist",
+    "author_association": "NONE",
+    "opened": "2026-08-16",
+    "state": "open",
+    "labels": [
+      "platform:windows",
+      "ui"
+    ],
+    "body_markdown": "When `vim.ui.open()` is called with a URL that includes an ampersand\nin the query string, the browser opens only the part before the first\n`&`:\n\n```lua\nvim.ui.open(\"https://duckduckgo.com/?q=hello&t=brave\")\n```\n\nopens `https://duckduckgo.com/?q=hello`, and `&t=brave` is lost.\n`:wait()` on the returned SystemObj shows exit code 1 with stderr\n`'t' is not recognized as an internal or external command`, even\nthough the spawned command is\n`{ \"cmd.exe\", \"/c\", \"start\", \"\", \"https://duckduckgo.com/?q=hello&t=brave\" }`.\n\nSteps: `nvim --clean`, then\n`:lua vim.ui.open(\"https://duckduckgo.com/?q=hello&t=brave\")`.\nExpected: the full URL opens. Environment: v0.13.0-dev nightly,\nWindows 11, Wezterm."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's command\nre-run on the nightly shows the truncated URL in the browser and the\n`'t' is not recognized` stderr; a control without `&`\n(`?q=hello`) opens fully, and quoting the URL manually in a raw\n`cmd.exe /c start \"\" \"URL^&t=brave\"` opens the full URL, isolating\ncmd.exe's metacharacter parsing of the unquoted argument as the\ncause.\n\nPlan: cmd.exe re-parses the argument string after `/c`, so `&` (and\nits sibling metacharacters `^ | < >`) split the command even though\nthe URL was passed as one argv entry. Scope, one bounded change: in\n`runtime/lua/vim/ui.lua`, when building the Windows `cmd.exe /c\nstart` invocation, caret-escape the cmd metacharacters in the path\nor URL argument. Known limit, stated in the plan: `%` (environment\nexpansion, e.g. `%20` in pre-encoded URLs followed by an existing\nvariable name) has different escaping rules under `/c` and is NOT\ncovered by this change; if it proves messy it will be deferred with\na note. Files: `runtime/lua/vim/ui.lua`,\n`test/functional/lua/ui_spec.lua`. Test plan: re-run the repro,\nexpect the full URL (both query parameters) in the browser and exit\ncode 0 from `:wait()`; the no-ampersand control unchanged; run the\nui functional spec.",
+  "pr": {
+    "title": "fix(ui): escape cmd.exe metacharacters in vim.ui.open() on Windows",
+    "description": "Problem: `vim.ui.open(\"...?q=hello&t=brave\")` on Windows truncates\nat `&`: cmd.exe re-parses the argument after `/c`, so metacharacters\nsplit the start command (#41337).\n\nSolution: caret-escape the cmd metacharacters (`& ^ | < >`) in the\nargument when building the `cmd.exe /c start` invocation, per the\nplan posted on the issue. Deviation note, recorded in the plan\nbefore this PR: percent-sign environment expansion (`%VAR%`) is NOT\nhandled here; its escaping rules under `/c` differ (doubling vs\ncaret) and a URL like `?q=%PATH%` still expands. The plan's deferral\nnote covers it, and this description restates it so reviewers can\nweigh the limit.",
+    "commits": "- fd83a12 fix(ui): caret-escape cmd.exe metacharacters in vim.ui.open()",
+    "diff": "```diff\n--- a/runtime/lua/vim/ui.lua\n+++ b/runtime/lua/vim/ui.lua\n@@ -155,9 +155,18 @@ function M.open(path, opt)\n   elseif vim.fn.has('win32') == 1 then\n-    cmd = { 'cmd.exe', '/c', 'start', '\"\"', path }\n+    -- cmd.exe re-parses the argument after /c, so & | ^ < > split the\n+    -- start command even when the URL is a single argv entry (#41337).\n+    -- Caret-escape them. Deliberately not handled: %VAR% expansion,\n+    -- whose /c escaping rules differ (see the plan's deferral note).\n+    local escaped = path:gsub('[&|^<>]', '^%0')\n+    cmd = { 'cmd.exe', '/c', 'start', '\"\"', escaped }\n--- a/test/functional/lua/ui_spec.lua\n+++ b/test/functional/lua/ui_spec.lua\n@@ -101,3 +101,17 @@ describe('vim.ui.open()', function()\n+\n+  it('escapes cmd.exe metacharacters on Windows', function()\n+    skip(not is_os('win'), 'Windows only')\n+    -- #41337: & in a query string must survive cmd.exe /c start.\n+    local cmd\n+    exec_lua([[\n+      vim.system = function(c) _G._cmd = c; return { wait = function() return { code = 0 } end } end\n+      vim.ui.open('https://example.com/?q=hello&t=x')\n+    ]])\n+    cmd = exec_lua('return _G._cmd')\n+    eq('https://example.com/?q=hello^&t=x', cmd[#cmd])\n+  end)\n```",
+    "test_evidence": "Repro re-run on the branch (Windows 11):\n\n```\n:lua =vim.ui.open(\"https://duckduckgo.com/?q=hello&t=brave\"):wait()\n-- before: { code = 1, stderr = \"'t' is not recognized ...\" },\n--         browser shows https://duckduckgo.com/?q=hello\n-- after:  { code = 0, stderr = \"\" },\n--         browser shows https://duckduckgo.com/?q=hello&t=brave\n```\n\nExpected-after per the plan: both query parameters present, exit\ncode 0. No-ampersand control unchanged. `TEST_FILE=test/functional/lua/ui_spec.lua make functionaltest`\npasses, including the new case."
+  }
+}

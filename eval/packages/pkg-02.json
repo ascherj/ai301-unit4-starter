@@ -1,0 +1,44 @@
+{
+  "id": "pkg-02",
+  "calibration": false,
+  "source": "Textualize/rich#4208",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: Textualize/rich (57085 stars, archived: no)\n- description: Rich is a Python library for rich text and beautiful formatting in the terminal.\n- latest release: v15.0.0 (2026-04-12)\n- pull requests: template notes Rich is not accepting new features (bugfixes always welcome; when in doubt open a discussion first) and asks for a type-of-changes checklist and a CHANGELOG.md entry\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "[BUG] Console.save_text clears recorded output when file write fails",
+    "number": 4208,
+    "author": "sanjay3941",
+    "author_association": "NONE",
+    "opened": "2026-08-16",
+    "state": "open",
+    "labels": [
+      "Needs triage"
+    ],
+    "body_markdown": "When using `Console(record=True)`, calling `save_text()` with\n`clear=True` (the default) clears the recorded console output even\nwhen the file cannot be written:\n\n```python\nfrom rich.console import Console\n\nconsole = Console(record=True)\nconsole.print(\"IMPORTANT OUTPUT\")\nprint(repr(console.export_text()))          # 'IMPORTANT OUTPUT\\n'\ntry:\n    console.save_text(r\"Z:\\no\\such\\path\\output.txt\")\nexcept Exception as e:\n    print(type(e).__name__, e)              # FileNotFoundError ...\nprint(repr(console.export_text()))          # '' -- record is gone\n```\n\nThe file was not successfully written, but the recorded output was\nalso cleared. Expected: the recorded output remains available when the\nsave fails, since nothing was persisted."
+  },
+  "comments_total": 2,
+  "thread_highlights": [
+    {
+      "date": "2026-08-17",
+      "author": "vardhans07",
+      "author_association": "NONE",
+      "summary_markdown": "looks like a valid bug; asks to take it up and work on a fix."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "vardhans07",
+      "author_association": "NONE",
+      "summary_markdown": "reports a fix with regression tests for save_text, save_html, and save_svg on a fork branch."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's script re-run\non v15.0.0 shows `export_text()` returning `''` after the failed\n`save_text` to a nonexistent path; a control run with a writable path\nshows the same clear happening after a successful write, confirming\nthe clear is unconditional in the export call, not the write.\n\nPlan: `Console.save_text`, `save_html`, and `save_svg` each call their\n`export_*` counterpart with `clear=clear` BEFORE opening the file, so\nthe record is destroyed even when `open()` or `write()` raises. Scope,\none bounded change: in `rich/console.py`, export with `clear=False`,\nwrite the file, and clear the record only after the write succeeds,\nin all three `save_*` methods (same one-shape fix, same file). Not in\nscope: changing the `clear=True` default or the export API. Files:\n`rich/console.py`, `tests/test_console.py`, `CHANGELOG.md` (the\nrepo's stated entry ask). Test plan: re-run the\nissue's script, expect `export_text()` to still return\n`'IMPORTANT OUTPUT\\n'` after the failed save; a successful save still\nclears; run pytest.",
+  "pr": {
+    "title": "Preserve recorded output when Console.save_* fails to write",
+    "description": "Bug fix per the plan on #4208: `save_text`, `save_html`, and\n`save_svg` cleared the record inside the export call before touching\nthe filesystem, so a failed write destroyed the recording. The save\nmethods now export without clearing, write, and clear only after the\nwrite succeeds. No API or default changes; CHANGELOG.md entry added.\n\nType of changes: Bug fix.",
+    "commits": "- 3f8a1c2 console: clear recorded output only after save_* writes succeed",
+    "diff": "```diff\n--- a/rich/console.py\n+++ b/rich/console.py\n@@ -2455,9 +2455,12 @@ class Console:\n     def save_text(self, path: str, *, clear: bool = True, styles: bool = False) -> None:\n-        text = self.export_text(clear=clear, styles=styles)\n+        text = self.export_text(clear=False, styles=styles)\n         with open(path, \"wt\", encoding=\"utf-8\") as write_file:\n             write_file.write(text)\n+        if clear:\n+            del self._record_buffer[:]\n@@ -2494,9 +2497,12 @@ class Console:\n     def save_html(\n-        html = self.export_html(\n-            theme=theme,\n-            clear=clear,\n+        html = self.export_html(\n+            theme=theme,\n+            clear=False,\n             code_format=code_format,\n             inline_styles=inline_styles,\n         )\n         with open(path, \"wt\", encoding=\"utf-8\") as write_file:\n             write_file.write(html)\n+        if clear:\n+            del self._record_buffer[:]\n@@ -2543,9 +2549,12 @@ class Console:\n     def save_svg(\n-        svg = self.export_svg(\n-            title=title,\n-            theme=theme,\n-            clear=clear,\n+        svg = self.export_svg(\n+            title=title,\n+            theme=theme,\n+            clear=False,\n             code_format=code_format,\n         )\n         with open(path, \"wt\", encoding=\"utf-8\") as write_file:\n             write_file.write(svg)\n+        if clear:\n+            del self._record_buffer[:]\n--- a/tests/test_console.py\n+++ b/tests/test_console.py\n@@ -1042,3 +1042,16 @@ def test_save_text():\n+\n+\n+def test_save_text_failed_write_preserves_record(tmp_path):\n+    # https://github.com/Textualize/rich/issues/4208\n+    console = Console(record=True)\n+    console.print(\"IMPORTANT OUTPUT\")\n+    missing = tmp_path / \"no\" / \"such\" / \"dir\" / \"out.txt\"\n+    with pytest.raises(OSError):\n+        console.save_text(str(missing))\n+    assert console.export_text(clear=False) == \"IMPORTANT OUTPUT\\n\"\n+    ok = tmp_path / \"out.txt\"\n+    console.save_text(str(ok))\n+    assert console.export_text(clear=False) == \"\"\n--- a/CHANGELOG.md\n+++ b/CHANGELOG.md\n@@ -5,6 +5,10 @@\n ## Unreleased\n \n+### Fixed\n+\n+- `Console.save_text`, `save_html`, and `save_svg` no longer clear the recorded output when the file write fails https://github.com/Textualize/rich/issues/4208\n+\n```",
+    "test_evidence": "Issue repro re-run on the branch:\n\n```\n$ python repro_4208.py            # before (v15.0.0)\n'IMPORTANT OUTPUT\\n'\nFileNotFoundError [Errno 2] No such file or directory: 'Z:\\\\no\\\\such\\\\path\\\\output.txt'\n''\n$ python repro_4208.py            # after (branch)\n'IMPORTANT OUTPUT\\n'\nFileNotFoundError [Errno 2] No such file or directory: 'Z:\\\\no\\\\such\\\\path\\\\output.txt'\n'IMPORTANT OUTPUT\\n'\n```\n\nExpected-after per the plan: the record survives the failed save, and\na successful save still clears it (covered by the new test's second\nhalf). `pytest tests/ -q` passes (1462 passed, 12 skipped)."
+  }
+}

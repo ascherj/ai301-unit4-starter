@@ -1,0 +1,48 @@
+{
+  "id": "pkg-16",
+  "calibration": false,
+  "source": "kubernetes/minikube#23471",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: kubernetes/minikube (32045 stars, archived: no)\n- description: Run Kubernetes locally.\n- latest release: v1.38.1 (2026-02-19)\n- pull requests: template hints ask for a release-notes-quality PR title, a \"fixes #<issue number>\" line in the description, and before/after examples for user-interface changes\n- contribution policy (CONTRIBUTING.md): Kubernetes contribution process (CLA, community guidelines); no stated AI policy"
+  },
+  "issue": {
+    "title": "`minikube image load` exits 0 and prints nothing when the guest-side load fails",
+    "number": 23471,
+    "author": "ravi-arnan",
+    "author_association": "NONE",
+    "opened": "2026-08-10",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "`minikube image load` returns exit code 0 when the image was not\nloaded; in the clearest case it also prints nothing, so both a human\nand a CI script see an unqualified success for a no-op.\n\n```console\n$ printf 'this is not a tar archive at all\\n' > notanimage.tar\n$ minikube image load ./notanimage.tar -p exitcode\n$ echo $?\n0\n$ minikube -p exitcode ssh -- docker images | grep notanimage\n$                      # nothing was loaded\n```\n\nThe failure is only visible with `-v=3`. Why: `DoLoadImages`\n(`pkg/minikube/machine/cache_images.go`) accumulates per-machine\nfailures into `failed`, logs them through klog (invisible at default\nverbosity), and returns `nil` unconditionally (\"Live pushes are not\nconsidered a failure\"). A corrupt or truncated tarball is the\nrealistic version: clean exit, absent image, nothing pointing at\nwhat went wrong."
+  },
+  "comments_total": 3,
+  "thread_highlights": [
+    {
+      "date": "2026-08-16",
+      "author": "nirs",
+      "author_association": "MEMBER",
+      "summary_markdown": "thanks, points at a related PR for review."
+    },
+    {
+      "date": "2026-08-16",
+      "author": "nirs",
+      "author_association": "MEMBER",
+      "summary_markdown": "on the reporter's caution about `DoLoadImages` being shared with the start-time loading path: \"minikube start starts only one profile - maybe you mean multiple node?\""
+    },
+    {
+      "date": "2026-08-17",
+      "author": "ravi-arnan",
+      "author_association": "NONE",
+      "summary_markdown": "confirms: the multi-item case on the start path is multi-node, not multi-profile; `cmd/image.go` passes one profile."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): the issue's not-a-tar\nrepro re-run on v1.38.1: exit 0, empty output, no image in the\nguest; `-v=3` shows the swallowed\n`Failed to load cached images ... Process exited with status 1`,\nconfirming the error exists and is discarded in `DoLoadImages`.\n\nPlan: make the failure visible on the `image load` path without\nchanging the start path's semantics. Scope, one bounded change:\n`DoLoadImages` returns an aggregated error when every target machine\nfailed; `cmd/image.go`'s load command surfaces that error to the\nuser and exits non-zero. Deliberately deferred, stated in the plan:\nthe start-time loading path (multi-node, where a per-node failure\nmay genuinely be non-fatal) keeps its current tolerant behavior;\nwhich start-path failures should become fatal is a maintainer\ndecision the plan leaves open, per the thread. Files:\n`pkg/minikube/machine/cache_images.go`, `cmd/minikube/cmd/image.go`,\nunit test for the aggregation. Test plan: re-run the not-a-tar\nrepro, expect a printed error naming the image and exit 1; a valid\ntarball control still loads with exit 0; `go test` on the touched\npackages.",
+  "pr": {
+    "title": "image load: fail loudly when the guest-side load fails",
+    "description": "fixes #23471\n\n`minikube image load` swallowed guest-side failures: `DoLoadImages`\nlogged them at klog verbosity and returned nil, so a corrupt tarball\nproduced exit 0 and silence. Per the plan on the issue,\n`DoLoadImages` now returns an aggregated error when all target\nmachines failed, and the `image load` command surfaces it and exits\nnon-zero.\n\nBefore:\n\n```\n$ minikube image load ./notanimage.tar && echo OK\nOK\n```\n\nAfter:\n\n```\n$ minikube image load ./notanimage.tar && echo OK\nX Failed to load image ./notanimage.tar: docker load: invalid tar header\n$ echo $?\n1\n```\n\nDeliberately out of scope (recorded in the plan and discussed with\n@nirs on the thread): the start-time image loading path keeps its\ntolerant behavior; a per-node failure at start is not necessarily\nfatal, and changing that is a separate decision.",
+    "commits": "- 74d8f0e machine: return aggregated error from DoLoadImages when all targets fail\n- ab112c9 cmd: surface image load failures and exit non-zero",
+    "diff": "```diff\n--- a/pkg/minikube/machine/cache_images.go\n+++ b/pkg/minikube/machine/cache_images.go\n@@ -246,15 +246,23 @@ func DoLoadImages(images []string, profiles []*config.Profile, cacheDir string,\n+\tvar loadErrs []error\n \tfor _, m := range machines {\n \t\tif err != nil {\n \t\t\tfailed = append(failed, m)\n \t\t\tklog.Warningf(\"Failed to load cached images for %q: %v\", pName, err)\n+\t\t\tloadErrs = append(loadErrs, fmt.Errorf(\"%s: %w\", pName, err))\n \t\t\tcontinue\n \t\t}\n \t\tsucceeded = append(succeeded, m)\n \t}\n \tif len(failed) > 0 {\n \t\tklog.Infof(\"failed pushing to: %s\", strings.Join(failed, \" \"))\n+\t\t// Image-load callers need the failure: when nothing succeeded,\n+\t\t// the operation failed, whatever the start path tolerates\n+\t\t// (#23471).\n+\t\tif len(succeeded) == 0 {\n+\t\t\treturn fmt.Errorf(\"loading images: %w\", errors.Join(loadErrs...))\n+\t\t}\n \t}\n-\t// Live pushes are not considered a failure\n+\t// Partial success stays non-fatal for the multi-node start path.\n \treturn nil\n--- a/cmd/minikube/cmd/image.go\n+++ b/cmd/minikube/cmd/image.go\n@@ -139,7 +139,9 @@ var loadImageCmd = &cobra.Command{\n-\t\tif err := machine.DoLoadImages(images, []*config.Profile{profile}, \"\", false); err != nil {\n-\t\t\tklog.Warningf(\"load failed: %v\", err)\n-\t\t}\n+\t\tif err := machine.DoLoadImages(images, []*config.Profile{profile}, \"\", false); err != nil {\n+\t\t\texit.Error(reason.GuestImageLoad, \"Failed to load image\", err)\n+\t\t}\n--- a/pkg/minikube/machine/cache_images_test.go\n+++ b/pkg/minikube/machine/cache_images_test.go\n@@ -88,3 +88,14 @@ func TestDoLoadImagesSuccess(t *testing.T) {\n+\n+func TestDoLoadImagesAllFailedReturnsError(t *testing.T) {\n+\t// #23471: a total failure must not return nil.\n+\terr := doLoadImagesWith(t, allTargetsFail)\n+\tif err == nil {\n+\t\tt.Fatal(\"expected aggregated error, got nil\")\n+\t}\n+\tif !strings.Contains(err.Error(), \"loading images\") {\n+\t\tt.Fatalf(\"unexpected error: %v\", err)\n+\t}\n+}\n```",
+    "test_evidence": "Repro re-run on the branch (before/after in the description, full\ntranscript):\n\n```\n$ minikube image load ./notanimage.tar -p exitcode\nX Failed to load image ./notanimage.tar: docker load: invalid tar header\n$ echo $?\n1\n$ minikube image load ./alpine.tar -p exitcode && echo $?\n0\n$ minikube -p exitcode ssh -- docker images | grep alpine\nalpine    latest    b0c9d60fc5e3   ...\n```\n\nExpected-after per the plan: loud error and exit 1 on the corrupt\ntarball; valid-tarball control unchanged. `go test\n./pkg/minikube/machine/... ./cmd/...` passes."
+  }
+}

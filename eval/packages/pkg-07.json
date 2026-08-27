@@ -1,0 +1,44 @@
+{
+  "id": "pkg-07",
+  "calibration": false,
+  "source": "golangci/golangci-lint#6671",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: golangci/golangci-lint (19271 stars, archived: no)\n- description: Fast linters runner for Go.\n- latest release: v2.12.2 (2026-05-06)\n- pull requests: template warns that PRs not following the rules are closed; asks for a brief description; linter-update PRs are restricted to the linter's author; new linters need an approved discussion before any PR\n- contribution policy (contributing guide + Code of Conduct agreement in the issue form): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "modernize atomictype analyzer breaks code when changes are split across files",
+    "number": 6671,
+    "author": "taran-p",
+    "author_association": "NONE",
+    "opened": "2026-07-14",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "The `atomictype` analyzer in `modernize` has suggested fixes for a\nsingle issue that span multiple files. When using the `--fix` flag,\nfixes suggested for other files are appended or prepended onto the\nfile where the diagnostic was reported.\n\nPractically for `modernize`, this means in `a.go` where an `int64` is\nturned into an `atomic.Int64`, any `b.go` `.LoadInt64(` call site will\nbe added to the end of `a.go` as `.Load(`, breaking the code.\n\nVersion: golangci-lint 2.12.2 built with go1.26.5. Config enables only\n`modernize`."
+  },
+  "comments_total": 2,
+  "thread_highlights": [
+    {
+      "date": "2026-07-14",
+      "author": "boring-cyborg[bot]",
+      "author_association": "NONE",
+      "summary_markdown": "first-issue greeting with a link to the contributing guide."
+    },
+    {
+      "date": "2026-07-31",
+      "author": "pawannn",
+      "author_association": "NONE",
+      "summary_markdown": "asks to give the fix a try."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): a two-file module (`a.go`\ndeclares `var counter int64`, `b.go` calls\n`atomic.LoadInt64(&counter)`); `golangci-lint run --fix` with only\nmodernize enabled rewrites `a.go` to `atomic.Int64` AND appends\n`b.go`'s rewritten `.Load()` call text to the bottom of `a.go`,\nwhich no longer compiles (`go build` fails); a control with both\nusages in one file applies cleanly, isolating the cross-file fix\napplication as the bug.\n\nPlan: the fix applier collects an analyzer's SuggestedFixes and\napplies every TextEdit to the diagnostic's file, ignoring each\nedit's own position information when it points into another file.\nScope, one bounded change: in the goanalysis fix application path,\ngroup TextEdits by the file their positions resolve to and apply\neach group to its own file, skipping (with a warning) any edit whose\nfile cannot be resolved. Not in scope: changing any analyzer or the\ndiagnostics themselves. Files: the fix application code under\n`pkg/goanalysis/`, tests beside it. Test plan: re-run the two-file\nrepro, expect `a.go` and `b.go` each correctly rewritten and\n`go build ./...` to pass; the one-file control unchanged; run the\nproject test suite.",
+  "pr": {
+    "title": "goanalysis: apply suggested fixes to the file each edit targets",
+    "description": "The fix applier assumed every TextEdit of a diagnostic lands in the\ndiagnostic's own file; modernize's atomictype emits cross-file\nedits, so text meant for `b.go` was appended to `a.go`. Edits are\nnow grouped by their resolved file before application, and an edit\nwhose position cannot be resolved is skipped with a warning instead\nof misapplied.",
+    "commits": "- 2f61b0a goanalysis: group suggested-fix edits by target file\n- 91cc44d goanalysis: warn and skip on unresolvable edit positions",
+    "diff": "```diff\n--- a/pkg/goanalysis/runner_fix.go\n+++ b/pkg/goanalysis/runner_fix.go\n@@ -118,14 +118,27 @@ func applySuggestedFixes(diag *diagnostic, fset *token.FileSet) error {\n-    file := fset.File(diag.Pos)\n-    var edits []textEdit\n-    for _, fix := range diag.SuggestedFixes {\n-        for _, edit := range fix.TextEdits {\n-            edits = append(edits, toTextEdit(file, edit))\n-        }\n-    }\n-    return applyEdits(file.Name(), edits)\n+    // A diagnostic's suggested fix may carry edits for other files\n+    // (modernize atomictype rewrites call sites across the package);\n+    // apply each edit to the file its own position resolves to.\n+    editsByFile := map[string][]textEdit{}\n+    for _, fix := range diag.SuggestedFixes {\n+        for _, edit := range fix.TextEdits {\n+            f := fset.File(edit.Pos)\n+            if f == nil {\n+                lintersdb.Warnf(\"skipping suggested fix edit with unresolvable position %v\", edit.Pos)\n+                continue\n+            }\n+            editsByFile[f.Name()] = append(editsByFile[f.Name()], toTextEdit(f, edit))\n+        }\n+    }\n+    for name, edits := range editsByFile {\n+        if err := applyEdits(name, edits); err != nil {\n+            return err\n+        }\n+    }\n+    return nil\n }\n--- a/pkg/goanalysis/runner_fix_test.go\n+++ b/pkg/goanalysis/runner_fix_test.go\n@@ -87,3 +87,10 @@ func TestApplyFixesSingleFile(t *testing.T) {\n+\n+func TestGroupEditsByFileBuildsGroups(t *testing.T) {\n+    edits := editsAt(t, \"a.go:3\", \"a.go:9\")\n+    groups := groupEditsByFile(testFset(t), edits)\n+    require.Len(t, groups, 1)\n+    require.Contains(t, groups, \"a.go\")\n+}\n```",
+    "test_evidence": "Verified the fix on a single-file case: with both the declaration and\nthe call site in `a.go`, `golangci-lint run --fix` rewrites the file\ncorrectly and the result builds.\n\n```\n$ golangci-lint run --fix ./onefile/ && go build ./onefile/\n$ echo $?\n0\n```\n\nUnit test added above passes. `go test ./pkg/goanalysis/...` passes."
+  }
+}

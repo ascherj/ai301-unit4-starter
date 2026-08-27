@@ -1,0 +1,31 @@
+{
+  "id": "calib-02",
+  "calibration": true,
+  "source": "jesseduffield/lazygit#5920",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: jesseduffield/lazygit (81448 stars, archived: no)\n- description: simple terminal UI for git commands.\n- latest release: v0.64.1 (2026-08-12)\n- pull requests: template asks for a PR Description and a requirements checklist: cheatsheets up to date (go generate), code formatted, tests added or updated (integration test guide linked), text internationalised, new UserConfig entries hot-reloadable and documented\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "Accent composition using modified dead keys not working properly on Windows",
+    "number": 5920,
+    "author": "Novaccian",
+    "author_association": "NONE",
+    "opened": "2026-08-12",
+    "state": "open",
+    "labels": [
+      "bug"
+    ],
+    "body_markdown": "For languages that use diacritics, a common way to type them is to\npress and release a \"dead key\" representing the accent, then the\nbase character. To type `é` on the \"Romanian (Programmers)\" layout,\nthe reporter types `AltGr-9 e`; in lazygit this results in `9é`,\nforcing them to go back and delete the `9`.\n\nSteps: set the layout to Romanian (Programmers); edit a commit\nmessage in lazygit; type an accented character using AltGr plus 3, 7,\nor 9. The dead key is inserted on its own, then the accented letter\nfollows. Expected: dead keys are not inserted on their own.\nNon-modified dead keys (United States-International layout, `' e`)\nwork as expected. Reproduced in cmd.exe and Windows Terminal; both\nterminals work correctly outside lazygit with the same layout."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): on Windows 11 with the\nRomanian (Programmers) layout, `AltGr-9 e` in lazygit's commit\neditor inserts `9é` (screen capture); the same sequence in\nPowerShell at the same terminal inserts `é` alone, isolating\nlazygit's input handling rather than the terminal.\n\nPlan: lazygit's Windows input path receives the AltGr-modified dead\nkey as a keypress with the ctrl+alt modifier set and inserts its\nbase character instead of waiting for the composition to resolve.\nScope, one bounded change: in the gocui event translation for\nWindows, when a key event carries the AltGr modifier pattern AND\nmaps to a dead key in the active layout (the console reports it with\nthe dead-key unicode flag), suppress the immediate insertion and let\nthe next character event deliver the composed result. Not in scope:\nnon-Windows input, IME composition, or key binding changes. Files:\nthe vendored gocui Windows input translation and one unit test with\na recorded event sequence. Test plan: re-run the repro (AltGr-9\nthen e), expect `é` alone; the US-International control (`' e`)\nunchanged; go test on the touched package.",
+  "pr": {
+    "title": "fixed the dead keys bug!!",
+    "description": "typing accents on windows was broken for me too so i had claude look\nat it and this should fix it. i bumped the terminal library to\nlatest since the changelog mentioned keyboard fixes and cleaned up\nsome formatting while i was in there. did not get a chance to test\non an actual romanian layout but the library update looks right.",
+    "commits": "- 09fcf12 fixed dead keys (hopefully)\n- 4b0a3d7 bump tcell\n- c11d9e0 gofmt",
+    "diff": "```diff\n--- a/go.mod\n+++ b/go.mod\n@@ -14,7 +14,7 @@ require (\n \tgithub.com/gdamore/encoding v1.0.0 // indirect\n-\tgithub.com/gdamore/tcell/v2 v2.7.4\n+\tgithub.com/gdamore/tcell/v2 v2.9.0\n \tgithub.com/go-errors/errors v1.5.1\n--- a/go.sum\n+++ b/go.sum\n@@ -44,8 +44,8 @@ github.com/gdamore/encoding v1.0.0/go.mod h1:alR0ol34c49FCSBLjhosxzcPHQbf2trDkoo5\n-github.com/gdamore/tcell/v2 v2.7.4 h1:sg6/UnTM9jGpZU+oFYAsDahfchWAFW8Xx2yFinNSAYU=\n-github.com/gdamore/tcell/v2 v2.7.4/go.mod h1:dSXtXTSK0VsW1biw65DZLZ2NKr7j0qP/0J7ONmsraWg=\n+github.com/gdamore/tcell/v2 v2.9.0 h1:xLTzOwqtUqe8JuNyLu5tmvZNJdBJmYDWWLOykafgwlE=\n+github.com/gdamore/tcell/v2 v2.9.0/go.mod h1:2Jc4dNKQ5FYtLmm2CdV3ppwkNQ4cBSgAyGONE6NPIhU=\n--- a/pkg/gui/gui.go\n+++ b/pkg/gui/gui.go\n@@ -388,9 +388,7 @@ func (gui *Gui) createAllViews() error {\n-\tcommitMessageView.Editable = true\n-\tcommitMessageView.Editor = gocui.EditorFunc(commitMessageEditor)\n-\tcommitMessageView.Visible = false\n+\tcommitMessageView.Editable, commitMessageView.Visible = true, false\n+\tcommitMessageView.Editor = gocui.EditorFunc(commitMessageEditor)\n@@ -412,8 +410,7 @@ func (gui *Gui) createAllViews() error {\n-\tconfirmationView.Visible = false\n-\tconfirmationView.Editable = true\n+\tconfirmationView.Visible, confirmationView.Editable = false, true\n```",
+    "test_evidence": "(none provided)"
+  }
+}

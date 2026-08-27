@@ -1,0 +1,29 @@
+{
+  "id": "calib-01",
+  "calibration": true,
+  "source": "dandavison/delta#2211",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: dandavison/delta (31792 stars, archived: no)\n- description: A syntax-highlighting pager for git, diff, grep, rg --json, and blame output.\n- latest release: 0.19.2 (2026-03-28)\n- pull requests: no PR template; the contribution docs ask that PRs stay small and reference the issue\n- contribution policy (CONTRIBUTING.md): standard contribution guide; no stated AI policy"
+  },
+  "issue": {
+    "title": "Duplicate \"file-decoration-style\" field in \"gruvmax-fang\" theme config",
+    "number": 2211,
+    "author": "senges",
+    "author_association": "NONE",
+    "opened": "2026-08-10",
+    "state": "open",
+    "labels": [],
+    "body_markdown": "In `themes.gitconfig`, theme \"gruvmax-fang\" has a duplicate key\n`file-decoration-style`:\n\n```\n[delta \"gruvmax-fang\"]\n    file-decoration-style = \"#434C5E\" ul\n    file-decoration-style = \"#84786A\" ul\n```\n\nFound while parsing the file with python `configparser`, which\nreports a duplicate-key error."
+  },
+  "comments_total": 0,
+  "thread_highlights": [],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): `configparser` raises\n`DuplicateOptionError: option 'file-decoration-style' in section\n'delta \"gruvmax-fang\"' already exists` on `themes.gitconfig`;\n`git config --file themes.gitconfig --get-all\ndelta.gruvmax-fang.file-decoration-style` prints both values,\nconfirming the second (`#84786A`) is the one git-config semantics\nactually apply.\n\nPlan: two steps. Remove the first, shadowed\n`file-decoration-style` line (git-config last-wins means `#84786A`\nis the effective value today, so deleting the `#434C5E` line changes\nnothing visually), then verify the file parses cleanly with a strict\nparser. Not in scope: any other theme. Files: `themes.gitconfig`.\nTest plan: re-run the configparser repro, expect a clean parse;\n`delta --show-syntax-themes` smoke check that gruvmax-fang still\nrenders with the `#84786A` decoration.",
+  "pr": {
+    "title": "Remove duplicate file-decoration-style from gruvmax-fang theme",
+    "description": "Removes the shadowed first `file-decoration-style` line from the\ngruvmax-fang theme (#2211). Git-config last-wins semantics mean\n`#84786A` was already the effective value, so rendering is\nunchanged; strict parsers no longer error on the duplicate.",
+    "commits": "- b52ce1a themes: remove shadowed file-decoration-style from gruvmax-fang",
+    "diff": "```diff\n--- a/themes.gitconfig\n+++ b/themes.gitconfig\n@@ -214,7 +214,6 @@\n [delta \"gruvmax-fang\"]\n     ; Powerline blocks: https://gist.github.com/XVilka/8346728\n-    file-decoration-style = \"#434C5E\" ul\n     file-decoration-style = \"#84786A\" ul\n     file-style = \"#84786A\"\n     hunk-header-decoration-style = ul\n```",
+    "test_evidence": "Repro re-run on the branch:\n\n```\n$ python3 -c \"import configparser; c=configparser.ConfigParser(strict=True); c.read('themes.gitconfig'); print('parsed OK')\"\n# before: configparser.DuplicateOptionError: ... 'file-decoration-style' ... already exists\n# after:\nparsed OK\n```\n\n`git config --file themes.gitconfig --get-all\ndelta.gruvmax-fang.file-decoration-style` now prints exactly one\nvalue (`#84786A ul`), the same effective value as before.\n`delta --show-syntax-themes | head` renders gruvmax-fang unchanged."
+  }
+}

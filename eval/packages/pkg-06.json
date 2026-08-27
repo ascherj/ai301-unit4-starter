@@ -1,0 +1,60 @@
+{
+  "id": "pkg-06",
+  "calibration": false,
+  "source": "microsoft/terminal#20507",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: microsoft/terminal (104626 stars, archived: no)\n- description: The new Windows Terminal and the original Windows console host, all in the same place.\n- latest release: v1.24.11911.0 (2026-07-16)\n- pull requests: template asks for Summary of the Pull Request, References and Relevant Issues, Detailed Description, Validation Steps Performed, and a PR checklist (closes #xxx, tests added/passed, documentation, schema)\n- contribution policy (CONTRIBUTING.md): contributions require a signed CLA; first-party code must not use private APIs (restated by a maintainer in this thread)"
+  },
+  "issue": {
+    "title": "SystemMenu is always light theme colored",
+    "number": 20507,
+    "author": "maj113",
+    "author_association": "NONE",
+    "opened": "2026-08-04",
+    "state": "open",
+    "labels": [
+      "Issue-Bug",
+      "Area-UserInterface",
+      "Product-Terminal",
+      "Priority-3",
+      "Tracking-External"
+    ],
+    "body_markdown": "Steps to reproduce: right click the titlebar or press alt+space to\nopen the System Menu.\n\nExpected: the System Menu follows either the Windows color mode\n(dark/light preference) or the Terminal application theme preference.\n\nActual: it is always white/light."
+  },
+  "comments_total": 8,
+  "thread_highlights": [
+    {
+      "date": "2026-08-05",
+      "author": "zadjii-msft",
+      "author_association": "MEMBER",
+      "summary_markdown": "confident this is already on the backlog somewhere; cannot find it."
+    },
+    {
+      "date": "2026-08-05",
+      "author": "zadjii-msft",
+      "author_association": "MEMBER",
+      "summary_markdown": "points at IslandWindow.cpp lines 1841-1845 as the place someone could try; mentions the explorer dark theme hack \"which we're not actually using in our code base\"."
+    },
+    {
+      "date": "2026-08-05",
+      "author": "maj113",
+      "author_association": "NONE",
+      "summary_markdown": "notes the SystemMenu ignores SetWindowTheme; it follows the UxTheme preferred app mode (undocumented API)."
+    },
+    {
+      "date": "2026-08-05",
+      "author": "DHowett",
+      "author_association": "MEMBER",
+      "summary_markdown": "\"we're held to a bit of a higher standard as first-party Microsoft folks such that we cannot ship any private API uses in public code.\""
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): on Windows 11 with system\ndark mode and the Terminal dark theme, alt+space renders a light\nsystem menu (screenshot in the report); the same build's title bar\nand tab row render dark, isolating the menu as the one surface not\nfollowing the theme plumbing.\n\nPlan: follow the maintainer pointer to\n`src/cascadia/WindowsTerminal/IslandWindow.cpp` (the theme-update\npath zadjii-msft linked): when the window theme updates, apply the\nmatching menu theming through the documented dark-mode support that\npath already uses, explicitly NOT using the undocumented\nSetPreferredAppMode API (DHowett: no private APIs in public code).\nHonest limit stated in the plan: without the private API, the menu\nmay only follow the theme on OS builds where the documented path\nsupports owner-drawn menu theming; if the documented path cannot\ntheme the menu at all, the plan's fallback is to report that finding\non the issue instead of shipping a hack. Scope, one bounded change:\nthe theme-update path in `IslandWindow.cpp` plus its header. Not in\nscope: any other window chrome, settings surface, or theme plumbing.\nFiles: `src/cascadia/WindowsTerminal/IslandWindow.cpp`,\n`IslandWindow.h`. Test plan: re-run the repro (alt+space) under\nsystem dark + Terminal dark, expect a dark menu; flip to light,\nexpect light; run the WindowsTerminal unit tests.",
+  "pr": {
+    "title": "Theme the system menu from the window theme update path",
+    "description": "Summary of the Pull Request: the system menu now follows the\nTerminal theme. On theme update, `IslandWindow` applies the\ndocumented dark-mode menu attributes alongside the existing\nframe/titlebar updates.\n\nReferences and Relevant Issues: closes #20507.\n\nDetailed Description: adds `_UpdateSystemMenuTheme()` called from the\nexisting theme-update path, per the plan posted on the issue. No\nfunctional changes outside the system menu fix.\n\nValidation Steps Performed: alt+space before/after under dark and\nlight (evidence below); `Terminal.Unit.Tests` pass.\n\nPR Checklist: closes #20507; tests passed; documentation n/a; schema\nn/a.",
+    "commits": "- 4e7d9a1 IslandWindow: theme the system menu on theme updates\n- b3c50f8 Rationalize theme update member naming and event plumbing\n- 06f14dd Add experimental.menuFollowsWindowTheme setting",
+    "diff": "```diff\n--- a/src/cascadia/WindowsTerminal/IslandWindow.cpp\n+++ b/src/cascadia/WindowsTerminal/IslandWindow.cpp\n@@ -1838,6 +1838,19 @@ void IslandWindow::OnApplicationThemeChanged(const ElementTheme& requestedTheme)\n     _currentTheme = requestedTheme;\n     _updateFrameTheme();\n+    _UpdateSystemMenuTheme();\n+}\n+\n+// Apply the documented dark-mode attributes to the window's system\n+// menu so alt+space follows the application theme (#20507).\n+void IslandWindow::_UpdateSystemMenuTheme()\n+{\n+    const BOOL dark = _currentTheme == ElementTheme::Dark;\n+    DwmSetWindowAttribute(_window.get(), DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));\n+    if (auto menu = GetSystemMenu(_window.get(), FALSE))\n+    {\n+        MENUINFO mi{ sizeof(MENUINFO), MIM_BACKGROUND | MIM_APPLYTOSUBMENUS };\n+        mi.hbrBack = dark ? _darkMenuBrush.get() : nullptr;\n+        SetMenuInfo(menu, &mi);\n+    }\n }\n@@ -212,11 +225,11 @@ void IslandWindow::Initialize()\n-    _themeChangedRevoker = _settings.ThemeChanged(winrt::auto_revoke, { this, &IslandWindow::_onThemeChanged });\n-    _frameBrush = _makeFrameBrush();\n+    _themeRevoker = _settings.ThemeChanged(winrt::auto_revoke, { this, &IslandWindow::_HandleThemeChange });\n+    _chromeBrush = _MakeChromeBrush();\n--- a/src/cascadia/TerminalSettingsModel/GlobalAppSettings.idl\n+++ b/src/cascadia/TerminalSettingsModel/GlobalAppSettings.idl\n@@ -84,6 +84,7 @@ namespace Microsoft.Terminal.Settings.Model\n         Boolean ForceVSync;\n+        Boolean MenuFollowsWindowTheme;\n         Boolean SoftwareRendering;\n```",
+    "test_evidence": "Repro re-run (alt+space) on the branch: system dark + Terminal dark\nnow shows a dark system menu; switching the Terminal theme to light\nflips it back on the next open. Screenshots attached before/after.\n`Terminal.Unit.Tests` pass locally (0 failures)."
+  }
+}

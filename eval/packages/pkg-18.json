@@ -1,0 +1,56 @@
+{
+  "id": "pkg-18",
+  "calibration": false,
+  "source": "nushell/nushell#18850",
+  "captured": "2026-08-18",
+  "repo_facts": {
+    "raw_markdown": "- repo: nushell/nushell (40293 stars, archived: no)\n- description: A new type of shell.\n- latest release: 0.115.0 (2026-08-15)\n- pull requests: template asks for a Description section (problem, approach, technical details) and a User-facing changes section used to generate release notes; the contributing guide is linked from the template\n- contribution policy (CONTRIBUTING.md): standard contribution guide with formatting and test commands (cargo fmt, clippy, cargo test); no stated AI policy"
+  },
+  "issue": {
+    "title": "`nu --help` prints ansi escape sequence even when stdout is not tty",
+    "number": 18850,
+    "author": "jcornaz",
+    "author_association": "NONE",
+    "opened": "2026-08-17",
+    "state": "open",
+    "labels": [
+      "status:needs-triage"
+    ],
+    "body_markdown": "Running `nu --help | less` shows raw escape sequences\n(`ESC[32mGeneral:ESC[0m`, `ESC[36m-hESC[0m`, and so on) through the\nwhole help text: the help printer colors its output unconditionally,\nwithout checking whether stdout is a terminal."
+  },
+  "comments_total": 8,
+  "thread_highlights": [
+    {
+      "date": "2026-08-17",
+      "author": "cptpiepmatz",
+      "author_association": "MEMBER",
+      "summary_markdown": "asks what `config use-colors | less` returns, hoping false."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "jcornaz",
+      "author_association": "NONE",
+      "summary_markdown": "it returns a blank page."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "fdncred",
+      "author_association": "CONTRIBUTOR",
+      "summary_markdown": "`$env.LESS = \"-FRXS\"` makes the less commands work fine."
+    },
+    {
+      "date": "2026-08-17",
+      "author": "jcornaz",
+      "author_association": "NONE",
+      "summary_markdown": "`less -r` is a workaround for the repro step, but the underlying issue stands: `nu --help` prints escape codes when stdout is not a tty."
+    }
+  ],
+  "plan_context_markdown": "The accepted plan this PR claims to implement, excerpted from the\nposted plan (with the repro evidence it built on):\n\nRepro evidence (from the accepted report): `nu --help | cat -v`\nshows `^[[32m` sequences on 0.115.0; the control `nu --help` on a\nterminal renders colored help, and `nu ls | cat -v` shows table\noutput already degrades to plain text when piped, so the help\nprinter is the one path skipping the tty check.\n\nPlan: the `--help` banner printer colors sections and flags\nunconditionally. Scope, one bounded change: in the main help\nprinting path (`src/command.rs`), gate the color styling on stdout\nbeing a terminal (the same `std::io::IsTerminal` check the table\nprinter uses), falling back to plain text when piped or redirected.\nNot in scope: honoring `config use-colors` for `--help` (config is\nnot loaded that early; noted in the plan as a possible follow-up) or\nany other command's output. Files: `src/command.rs`, one test.\nTest plan: re-run `nu --help | cat -v`, expect no escape sequences;\n`nu --help` on a tty still colored; cargo test.",
+  "pr": {
+    "title": "Print plain --help when stdout is not a terminal",
+    "description": "Description: `nu --help | less` showed raw ANSI sequences because\nthe help printer styles unconditionally (#18850). The styling is now\ngated on `std::io::stdout().is_terminal()`, matching how table\noutput already degrades when piped. Per the plan, `config\nuse-colors` stays out of scope for `--help` (config is not loaded at\nthat point).\n\nUser-facing changes: `nu --help` piped or redirected now prints\nplain text.",
+    "commits": "- 0e6b1a2 gate --help colors on stdout being a terminal\n- 9c37d51 fmt pass on command.rs",
+    "diff": "```diff\n--- a/src/command.rs\n+++ b/src/command.rs\n@@ -1,10 +1,11 @@\n-use nu_engine::{command_prelude::*, get_full_help};\n-use nu_protocol::{\n-    ast::{Expr, Expression},\n-    engine::{EngineState, Stack, StateWorkingSet},\n-    Category, ShellError, Signature, Spanned, SyntaxShape, Value,\n-};\n+use nu_engine::command_prelude::*;\n+use nu_engine::get_full_help;\n+use nu_protocol::ast::{Expr, Expression};\n+use nu_protocol::engine::{EngineState, Stack, StateWorkingSet};\n+use nu_protocol::{Category, ShellError, Signature, Spanned, SyntaxShape, Value};\n+use std::io::IsTerminal;\n@@ -214,20 +215,24 @@ fn print_help_banner(engine_state: &EngineState) {\n-    let g = \"\\x1b[32m\";\n-    let c = \"\\x1b[36m\";\n-    let d = \"\\x1b[2;39m\";\n-    let r = \"\\x1b[0m\";\n+    // eprintln!(\"help colors: tty={}\", std::io::stdout().is_terminal());\n+    let colorize = std::io::stdout().is_terminal();\n+    let (g, c, d, r) = if colorize {\n+        (\"\\x1b[32m\", \"\\x1b[36m\", \"\\x1b[2;39m\", \"\\x1b[0m\")\n+    } else {\n+        (\"\", \"\", \"\", \"\")\n+    };\n \n-    println!(\"{g}General:{r}\");\n-    println!(\"  {c}-h{r}, {c}--help{r}\");\n-    println!(\"      {d}show this help message{r}\");\n+    println!(\"{g}General:{r}\");\n+    println!(\"  {c}-h{r}, {c}--help{r}\");\n+    println!(\"      {d}show this help message{r}\");\n@@ -246,14 +251,14 @@ fn print_help_banner(engine_state: &EngineState) {\n-    println!(\"{g}Startup:{r}\");\n-    println!(\"  {c}-i{r}, {c}--interactive{r}\");\n-    println!(\"      {d}start as an interactive shell{r}\");\n-    println!(\"  {c}-l{r}, {c}--login{r}\");\n-    println!(\"      {d}start as a login shell{r}\");\n-    println!(\"  {c}-c{r}, {c}--commands{r} <{d}string{r}>\");\n-    println!(\"      {d}run the given commands and then exit{r}\");\n+    println!(\"{g}Startup:{r}\");\n+    println!(\"  {c}-i{r}, {c}--interactive{r}\");\n+    println!(\"      {d}start as an interactive shell{r}\");\n+    println!(\"  {c}-l{r}, {c}--login{r}\");\n+    println!(\"      {d}start as a login shell{r}\");\n+    println!(\"  {c}-c{r}, {c}--commands{r} <{d}string{r}>\");\n+    println!(\"      {d}run the given commands and then exit{r}\");\n--- a/tests/main.rs\n+++ b/tests/main.rs\n@@ -77,3 +77,11 @@ fn help_exits_zero() {\n+\n+#[test]\n+fn help_piped_has_no_ansi_escapes() {\n+    // #18850\n+    let out = nu_command().arg(\"--help\").pipe_stdout().output();\n+    assert!(!String::from_utf8_lossy(&out.stdout).contains('\\x1b'));\n+}\n```",
+    "test_evidence": "Repro re-run on the branch:\n\n```\n$ nu --help | cat -v | grep -c '\\^\\['     # before: 214\n214\n$ ./target/release/nu --help | cat -v | grep -c '\\^\\['   # after\n0\n```\n\nOn a tty, `nu --help` still renders the colored sections (screenshot\nattached). Expected-after per the plan on both counts. `cargo test`\npasses; fmt and clippy clean."
+  }
+}
