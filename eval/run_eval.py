@@ -24,11 +24,13 @@ the model it was validated on.
 """
 
 import argparse
+import hashlib
 import concurrent.futures
 import json
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -242,6 +244,46 @@ def load_tool(tool_dir: Path) -> dict[str, str] | None:
     return texts if ok else None
 
 
+class _Tee:
+    """Mirror everything printed to the screen into a buffer as well, so
+    --save-run can write the transcript the student saw."""
+
+    def __init__(self, stream):
+        self.stream = stream
+        self.buf: list[str] = []
+
+    def write(self, s: str) -> int:
+        self.buf.append(s)
+        return self.stream.write(s)
+
+    def flush(self) -> None:
+        self.stream.flush()
+
+    def isatty(self) -> bool:
+        return self.stream.isatty()
+
+    def text(self) -> str:
+        return "".join(self.buf)
+
+
+def write_run(path: str, graded: str, files: list, n_items: int,
+              transcript: str) -> None:
+    """Write the run transcript to a file, UTF-8 on every platform, under a
+    provenance header the student did not type: what was graded, on which
+    model, and a fingerprint of each file that went into the run."""
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    head = [f"# eval run written by run_eval.py at {stamp}",
+            f"# model: {MODEL} (pinned)",
+            f"# graded: {graded}",
+            f"# packages: {n_items} scored"]
+    for p in files:
+        digest = hashlib.sha256(Path(p).read_bytes()).hexdigest()[:16]
+        head.append(f"#   {Path(p).name}  sha256:{digest}")
+    head.append("#")
+    Path(path).write_text("\n".join(head) + "\n" + transcript,
+                          encoding="utf-8")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Grade the eval set with a pr-precheck tool directory "
@@ -267,9 +309,17 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=5)
     ap.add_argument("--timeout", type=int, default=420,
                     help="seconds per package per attempt")
+    ap.add_argument("--save-run", default=None, metavar="FILE",
+                    help="write this run's output to FILE (the run you "
+                         "commit); refused on partial runs")
     ap.add_argument("--out", default=None,
                     help="also write full results as JSON to this path")
     a = ap.parse_args()
+
+    run_log = None
+    if a.save_run:
+        run_log = _Tee(sys.stdout)
+        sys.stdout = run_log
 
     if not a.skill and not a.rubric:
         print("error: pass --skill DIR (your tool directory) or --rubric "
@@ -404,6 +454,20 @@ def main() -> int:
                   "category floor are decided only by a full run.")
     if errors:
         print(f"{errors} item(s) errored; fix and re-run.", file=sys.stderr)
+
+    if run_log is not None:
+        sys.stdout = run_log.stream
+        if scored_total != full_scored:
+            print(f"partial run: NOT written to {a.save_run}. Partial runs "
+                  "are for finding problems; the run you commit comes from "
+                  "one full run of your finished tool.")
+        elif errors:
+            print(f"{errors} item(s) errored: NOT written to {a.save_run}. "
+                  "Fix and re-run.")
+        else:
+            write_run(a.save_run, str(tool_dir), [tool_dir / rel for rel in TOOL_FILES.values()], scored_total,
+                      run_log.text())
+            print(f"run written to {a.save_run}")
 
     if a.out:
         Path(a.out).write_text(json.dumps({

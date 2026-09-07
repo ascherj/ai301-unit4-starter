@@ -55,6 +55,25 @@ model flag. This keeps every student's run (and the instructor
 stability runs that set the bar) on the same grader, and Sonnet is the
 model your course credit is budgeted for.
 
+## Saving the run you commit
+
+Add `--save-run eval-run.txt` to your confirming full run and the harness
+writes the file for you:
+
+    python3 run_eval.py --skill path/to/your/tool-directory --save-run eval-run.txt
+
+The file holds the same text you watched on screen, written as UTF-8 on
+every platform, under a short header the harness fills in: the pinned
+model, the tool it graded, and a fingerprint of each file that went into
+the run. That file is what you upload to your course repo.
+
+Partial runs refuse to write it. A `--limit` or `--only` run says so and
+leaves the file untouched, so a cheap re-run can never overwrite the full
+run you already saved.
+
+Do not hand-edit the file. Where you account for the runs it took to get
+there is your write-up in the phase file, not the transcript.
+
 ## What the output means
 
 One line per package while grading, then a table:
