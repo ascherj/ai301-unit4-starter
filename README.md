@@ -13,7 +13,7 @@ pages tell you to install and build out.
   layout and the contract are given; the content of every file is
   yours: `SKILL.md`, the rubric, the evidence guide, the procedure
   (your voice guide pastes forward from Unit 2, and the sandbox
-  `scope.md` comes filled). Building the whole tool is the Unit 4
+  `scope.md` comes written except its `Repo:` line, which you fill). Building the whole tool is the Unit 4
   deliverable.
 - `eval/`: the eval harness, the gold labels, and 24 frozen packages
   (20 scored plus the 4 calibration packages from the in-class

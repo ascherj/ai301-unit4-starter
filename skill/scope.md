@@ -7,7 +7,9 @@ the bundle is the whole world and this file is ignored. The rubric
 which repos a pull request may target at all, and what the house
 rules are where it lands.
 
-Staff wrote this file. It ships filled; you do not edit it this week.
+Staff wrote this file. One line is yours: the `Repo:` line below,
+which you fill in with your Path Review repo. Leave the rest as it
+ships.
 -->
 
 ## Where your pull request lives
@@ -17,10 +19,11 @@ scope this week:
 
 - Repo: `<ORG>/<PATH-REVIEW-REPO>` <!-- paste your section's repo from the Unit 1 Check-In page -->
 
-If the repo line above still reads as a bracketed placeholder, your
-cohort's copy has not been finalized: stop and ask your instructor for
-the Path Review repo link before running live mode. Eval runs never
-read this file, so the harness and the eval bar work either way.
+The repo line above ships as a bracketed placeholder; replacing it is
+part of installing the tool this unit. If you do not know your section's
+Path Review repo, it is on the Unit 1 Check-In page, or ask your
+instructor before running live mode. Eval runs never read this file,
+so the harness and the eval bar work either way.
 
 Your pull request must implement the plan you posted in week 3 (or the
 house plan the instructor routed you to), on the issue that plan
