@@ -17,11 +17,11 @@ ships.
 Only pull requests against the course's Path Review repository are in
 scope this week:
 
-- Repo: `<ORG>/<PATH-REVIEW-REPO>` <!-- paste your section's repo from the Unit 1 Check-In page -->
+- Repo: `<ORG>/<PATH-REVIEW-REPO>` <!-- paste your section's repo from the Unit 1 Assignment tab -->
 
 The repo line above ships as a bracketed placeholder; replacing it is
 part of installing the tool this unit. If you do not know your section's
-Path Review repo, it is on the Unit 1 Check-In page, or ask your
+Path Review repo, it is on the Unit 1 Assignment tab, or ask your
 instructor before running live mode. Eval runs never read this file,
 so the harness and the eval bar work either way.
 
