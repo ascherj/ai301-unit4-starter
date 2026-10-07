@@ -3,8 +3,8 @@
 Materials for Unit 4 of AI301 (test and submit). This repo holds the
 week's runnable artifacts: the pr-precheck tool shell and its eval
 harness. All instructions live on the course portal (Overview,
-Activity, and Assignment tabs for Unit 4); this repo is the package those
-pages tell you to install and build out.
+Activity, and Assignment tabs for this unit); this repo is the package
+those pages tell you to install and build out.
 
 ## What's here
 
@@ -14,7 +14,7 @@ pages tell you to install and build out.
   yours: `SKILL.md`, the rubric, the evidence guide, the procedure
   (your voice guide pastes forward from Unit 2, and the sandbox
   `scope.md` comes written except its `Repo:` line, which you
-  fill). Building the whole tool is the Unit 4 deliverable.
+  fill). Building the whole tool is this unit's deliverable.
 - `eval/`: the eval harness, the gold labels, and 24 frozen packages
   (20 scored plus the 4 calibration packages from the in-class
   activity). See `eval/README.md` for the full run and output guide.
