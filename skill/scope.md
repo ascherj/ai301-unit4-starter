@@ -17,13 +17,14 @@ ships.
 Only pull requests against the course's Path Review repository are in
 scope this week:
 
-- Repo: `<ORG>/<PATH-REVIEW-REPO>` <!-- paste your section's repo from the Unit 1 Assignment tab -->
+- Repo: `<ORG>/<PATH-REVIEW-REPO>` <!-- your section's repo is shown in the install step of this week's activity page -->
 
 The repo line above ships as a bracketed placeholder; replacing it is
-part of installing the tool this unit. If you do not know your section's
-Path Review repo, it is on the Unit 1 Assignment tab, or ask your
-instructor before running live mode. Eval runs never read this file,
-so the harness and the eval bar work either way.
+part of installing the tool this unit. Your section's Path Review repo
+is shown in the install step of this week's activity page on the course
+portal; if it is not there, ask your instructor before running live
+mode. Eval runs never read this file, so the harness and the eval bar
+work either way.
 
 Your pull request must implement the plan you posted in week 3 (or the
 house plan the instructor routed you to), on the issue that plan

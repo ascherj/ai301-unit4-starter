@@ -93,9 +93,10 @@ scope names where the student's PR must live and the house rules of
 that environment; the tool refuses to grade work outside the scoped
 repo, and if the scope's repo line still carries an unfilled
 placeholder it stops without grading and tells the student to fill
-the `Repo:` line in scope.md with their section's Path Review repo. It never guesses a scope. In eval
-mode, `scope.md` is ignored entirely. This seam is why the same tool
-graduates: staff swap one file and the field of view changes.
+the `Repo:` line in `scope.md` with their section's Path Review repo.
+It never guesses a scope. In eval mode, `scope.md` is ignored
+entirely. This seam is why the same tool graduates: staff swap one
+file and the field of view changes.
 
 ## The voice seam
 
