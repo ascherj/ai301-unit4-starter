@@ -3,7 +3,7 @@
 Materials for Unit 4 of AI301 (test and submit). This repo holds the
 week's runnable artifacts: the pr-precheck tool shell and its eval
 harness. All instructions live on the course portal (Overview,
-Activity, and Check-In tabs for Unit 4); this repo is the package those
+Activity, and Assignment tabs for Unit 4); this repo is the package those
 pages tell you to install and build out.
 
 ## What's here

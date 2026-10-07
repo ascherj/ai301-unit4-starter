@@ -109,8 +109,7 @@ One line per package while grading, then a table:
   agreement of 18 of 20 or better passes (exactly 18 passes), AND the
   category floor holds. The 4 calibration packages are never scored.
   Full bar details, including the human read of your tool: the
-  course portal's Check-In page (`ai301/projects/project_4.md` in
-  this repo).
+  Unit 4 Assignment tab on the course portal.
 
 Disagreements are the feedback loop: open the package the table
 names, reread the diff against the plan and the evidence against the
